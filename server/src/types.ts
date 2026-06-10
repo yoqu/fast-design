@@ -35,4 +35,6 @@ export type ProjectMeta = {
   name: string;
   createdAt: number;
   model?: string | null;
+  thinking?: string | null;
+  instructions?: string | null;
 };

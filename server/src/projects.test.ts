@@ -10,6 +10,7 @@ import {
   readHistory,
   appendHistory,
   safeResolve,
+  updateProject,
 } from './projects.js';
 
 const created: string[] = [];
@@ -53,5 +54,18 @@ describe('projects', () => {
     expect(safeResolve(meta.id, 'a/../../x')).toBeNull();
     expect(safeResolve(meta.id, 'index.html')).toContain(projectDir(meta.id));
     expect(() => projectDir('../evil')).toThrow();
+  });
+
+  it('updates project meta fields partially', () => {
+    const meta = createProject('patch-me');
+    created.push(meta.id);
+    const updated = updateProject(meta.id, { model: 'minimax-cn/MiniMax-M2.7', thinking: 'high' });
+    expect(updated?.model).toBe('minimax-cn/MiniMax-M2.7');
+    expect(updated?.thinking).toBe('high');
+    expect(updated?.name).toBe('patch-me');
+    const cleared = updateProject(meta.id, { model: null, instructions: '项目指令' });
+    expect(cleared?.model).toBeNull();
+    expect(cleared?.thinking).toBe('high');
+    expect(cleared?.instructions).toBe('项目指令');
   });
 });

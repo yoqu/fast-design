@@ -63,6 +63,24 @@ export function createProject(name: string, model: string | null = null): Projec
   return meta;
 }
 
+export type ProjectMetaPatch = {
+  model?: string | null;
+  thinking?: string | null;
+  instructions?: string | null;
+};
+
+/** 部分更新项目 meta；undefined 字段不动，null 表示清除。 */
+export function updateProject(id: string, patch: ProjectMetaPatch): ProjectMeta | null {
+  const meta = getProject(id);
+  if (!meta) return null;
+  const next: ProjectMeta = { ...meta };
+  for (const key of ['model', 'thinking', 'instructions'] as const) {
+    if (patch[key] !== undefined) next[key] = patch[key];
+  }
+  fs.writeFileSync(metaPath(id), JSON.stringify(next, null, 2));
+  return next;
+}
+
 export function deleteProject(id: string): void {
   fs.rmSync(projectDir(id), { recursive: true, force: true });
 }
