@@ -52,6 +52,7 @@ export default function ExtensionsSection() {
     try {
       const result = await piApi.removeExtension(s);
       setOutput(result.output);
+      if (!result.ok) setError('卸载失败，详见输出');
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '卸载失败');

@@ -172,14 +172,16 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated 
         >
           文件
         </button>
-        <button
-          type="button"
-          onClick={() => setShowSettings(true)}
-          title="项目设置"
-          className="mb-1 shrink-0 rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-        >
-          ⚙
-        </button>
+        {meta && onMetaUpdated && (
+          <button
+            type="button"
+            onClick={() => setShowSettings(true)}
+            title="项目设置"
+            className="mb-1 shrink-0 rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+          >
+            ⚙
+          </button>
+        )}
       </div>
       <div className="relative min-h-0 flex-1 bg-white">
         {showFiles ? (

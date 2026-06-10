@@ -59,7 +59,7 @@ export type ProviderStatus = {
   oauth: boolean;
 };
 
-export type CustomModel = { id: string; name?: string; contextWindow?: number };
+export type CustomModel = { id: string; name?: string; contextWindow?: number; maxTokens?: number };
 
 export type CustomProvider = {
   id: string;

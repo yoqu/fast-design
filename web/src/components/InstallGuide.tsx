@@ -18,9 +18,13 @@ export default function InstallGuide({ onRecheck }: Props) {
   };
 
   const copy = async () => {
-    await navigator.clipboard.writeText(INSTALL_CMD);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(INSTALL_CMD);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // 非安全上下文或权限拒绝——命令本身可见，可手动复制
+    }
   };
 
   return (

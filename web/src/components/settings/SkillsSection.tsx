@@ -14,6 +14,7 @@ export default function SkillsSection({ projectId }: Props) {
   const [newDesc, setNewDesc] = useState('');
   const [editor, setEditor] = useState<EditorState>(null);
   const [saving, setSaving] = useState(false);
+  const [toggling, setToggling] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -29,15 +30,20 @@ export default function SkillsSection({ projectId }: Props) {
   }, [load]);
 
   const toggle = async (s: SkillInfo) => {
+    if (toggling) return;
+    setToggling(`${s.scope}:${s.rel}`);
     try {
       await piApi.toggleSkill(s.scope, s.rel, !s.enabled, projectId);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '操作失败');
+    } finally {
+      setToggling(null);
     }
   };
 
   const openEditor = async (s: SkillInfo) => {
+    setError(null);
     try {
       setEditor({ skill: s, content: await piApi.skillContent(s.scope, s.rel, projectId) });
     } catch (err) {
@@ -94,7 +100,7 @@ export default function SkillsSection({ projectId }: Props) {
               className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-700 disabled:opacity-50">
               {saving ? '保存中…' : '保存'}
             </button>
-            <button onClick={() => setEditor(null)} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50">
+            <button onClick={() => { setEditor(null); setError(null); }} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50">
               返回
             </button>
           </div>
@@ -150,6 +156,7 @@ export default function SkillsSection({ projectId }: Props) {
                       role="switch"
                       aria-checked={s.enabled}
                       onClick={() => void toggle(s)}
+                      disabled={toggling !== null}
                       className={`h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors ${s.enabled ? 'bg-emerald-500' : 'bg-zinc-300'}`}
                       title={s.enabled ? '点击禁用' : '点击启用'}
                     >

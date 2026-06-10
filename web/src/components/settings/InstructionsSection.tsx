@@ -41,7 +41,7 @@ export default function InstructionsSection() {
         className="min-h-0 flex-1 resize-none rounded-lg border border-zinc-300 p-3 text-sm outline-none focus:border-zinc-500"
       />
       <div>
-        <button onClick={() => void save()} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-700">
+        <button onClick={() => void save()} disabled={!loaded} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-700 disabled:opacity-50">
           保存
         </button>
       </div>
