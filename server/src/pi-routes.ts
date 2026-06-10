@@ -97,9 +97,15 @@ export function registerPiRoutes(app: express.Express, deps: PiRoutesDeps): void
       const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
       if (!key) throw new Error('BAD_REQUEST: key 不能为空');
       setProviderKey(req.params.id, key);
+      deps.disposeIdleSessions();
     }),
   );
-  app.delete('/api/pi/providers/:id/key', (req, res) => handle(res, () => deleteProviderKey(req.params.id)));
+  app.delete('/api/pi/providers/:id/key', (req, res) =>
+    handle(res, () => {
+      deleteProviderKey(req.params.id);
+      deps.disposeIdleSessions();
+    }),
+  );
 
   app.post('/api/pi/custom-providers', (req, res) =>
     handle(res, () => {
@@ -108,6 +114,7 @@ export function registerPiRoutes(app: express.Express, deps: PiRoutesDeps): void
         throw new Error('BAD_REQUEST: 需要 id/baseUrl/api');
       }
       upsertCustomProvider(id, { baseUrl, api, apiKey, models: Array.isArray(models) ? models : [] });
+      deps.disposeIdleSessions();
       return listCustomProviders();
     }),
   );
@@ -116,12 +123,14 @@ export function registerPiRoutes(app: express.Express, deps: PiRoutesDeps): void
       const { baseUrl, api, apiKey, models } = req.body ?? {};
       if (typeof baseUrl !== 'string' || typeof api !== 'string') throw new Error('BAD_REQUEST: 需要 baseUrl/api');
       upsertCustomProvider(req.params.id, { baseUrl, api, apiKey, models: Array.isArray(models) ? models : [] });
+      deps.disposeIdleSessions();
       return listCustomProviders();
     }),
   );
   app.delete('/api/pi/custom-providers/:id', (req, res) =>
     handle(res, () => {
       deleteCustomProvider(req.params.id);
+      deps.disposeIdleSessions();
       return listCustomProviders();
     }),
   );
@@ -170,13 +179,17 @@ export function registerPiRoutes(app: express.Express, deps: PiRoutesDeps): void
   app.post('/api/pi/extensions', (req, res) =>
     void handleAsync(res, async () => {
       const source = typeof req.body?.source === 'string' ? req.body.source.trim() : '';
-      return installExtension(source);
+      const result = await installExtension(source);
+      deps.disposeIdleSessions();
+      return result;
     }),
   );
   app.delete('/api/pi/extensions', (req, res) =>
     void handleAsync(res, async () => {
       const source = typeof req.query.source === 'string' ? req.query.source : '';
-      return removeExtension(source);
+      const result = await removeExtension(source);
+      deps.disposeIdleSessions();
+      return result;
     }),
   );
 

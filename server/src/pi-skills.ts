@@ -183,7 +183,8 @@ export function createSkill(name: string, description: string): SkillInfo {
   const dir = path.join(globalSkillsRoot(), name);
   if (fs.existsSync(dir)) throw new Error(`SKILL_EXISTS: ${name}`);
   fs.mkdirSync(dir, { recursive: true });
-  const desc = description.trim() || name;
+  // 描述压成单行，防止换行注入破坏 frontmatter 结构。
+  const desc = (description.trim() || name).replace(/\s*\r?\n\s*/g, ' ');
   fs.writeFileSync(
     path.join(dir, 'SKILL.md'),
     `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n\n在这里编写技能说明。\n`,
