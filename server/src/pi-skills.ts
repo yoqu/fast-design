@@ -60,6 +60,22 @@ export function parseFrontmatter(content: string): { name: string | null; descri
 
 // ---- 扫描 ----
 
+/** Dirent 类型判定，符号链接按其目标解析（pi 加载技能时同样跟随符号链接）。 */
+function direntKind(parent: string, d: fs.Dirent): 'dir' | 'file' | null {
+  if (d.isDirectory()) return 'dir';
+  if (d.isFile()) return 'file';
+  if (d.isSymbolicLink()) {
+    try {
+      const st = fs.statSync(path.join(parent, d.name));
+      if (st.isDirectory()) return 'dir';
+      if (st.isFile()) return 'file';
+    } catch {
+      // 悬空链接：忽略
+    }
+  }
+  return null;
+}
+
 function disabledPatterns(scope: SkillScope, projectDir: string | null): Set<string> {
   const file =
     scope === 'global'
@@ -112,18 +128,18 @@ function scanRoot(root: string, scope: SkillScope, disabled: Set<string>): Skill
     } catch {
       return;
     }
-    const skillMd = dirents.find((d) => d.isFile() && d.name === 'SKILL.md');
+    const skillMd = dirents.find((d) => direntKind(dir, d) === 'file' && d.name === 'SKILL.md');
     if (skillMd) {
       pushSkill(path.relative(root, dir).split(path.sep).join('/'), path.join(dir, 'SKILL.md'));
       return; // 技能目录不再向下递归
     }
     for (const d of dirents) {
-      if (d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules') walk(path.join(dir, d.name));
+      if (direntKind(dir, d) === 'dir' && !d.name.startsWith('.') && d.name !== 'node_modules') walk(path.join(dir, d.name));
     }
   };
   for (const entry of entries) {
-    if (entry.isFile() && entry.name.endsWith('.md')) pushSkill(entry.name, path.join(root, entry.name));
-    else if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') walk(path.join(root, entry.name));
+    if (direntKind(root, entry) === 'file' && entry.name.endsWith('.md')) pushSkill(entry.name, path.join(root, entry.name));
+    else if (direntKind(root, entry) === 'dir' && !entry.name.startsWith('.') && entry.name !== 'node_modules') walk(path.join(root, entry.name));
   }
   return out.sort((a, b) => a.rel.localeCompare(b.rel));
 }

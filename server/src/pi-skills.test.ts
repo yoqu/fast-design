@@ -57,6 +57,17 @@ describe('listSkills', () => {
     expect(listSkills(null).map((s) => s.rel)).toEqual(['alpha']);
   });
 
+  it('follows symlinked skill directories (npx skills install layout)', () => {
+    const real = path.join(piDir, 'real-skills');
+    writeSkill(real, 'linked');
+    const root = path.join(piDir, 'skills');
+    fs.mkdirSync(root, { recursive: true });
+    fs.symlinkSync(path.join(real, 'linked'), path.join(root, 'linked'));
+    const skills = listSkills(null);
+    expect(skills.map((s) => s.rel)).toEqual(['linked']);
+    expect(skills[0].description).toBe('技能 linked');
+  });
+
   it('reflects disabled state from settings.json patterns (both dir and SKILL.md forms)', () => {
     const root = path.join(piDir, 'skills');
     writeSkill(root, 'alpha');
