@@ -1,22 +1,31 @@
-import { useState } from 'react';
-import type { ProjectMeta } from '../lib/types';
+import { useEffect, useState } from 'react';
+import { piApi } from '../lib/api';
+import type { PiModel, ProjectMeta } from '../lib/types';
 
 type Props = {
   projects: ProjectMeta[];
   activeId: string | null;
   onSelect: (id: string) => void;
-  onCreate: (name: string) => void;
+  onCreate: (name: string, model?: string | null) => void;
   onDelete: (id: string) => void;
+  onOpenSettings: () => void;
 };
 
-export default function Sidebar({ projects, activeId, onSelect, onCreate, onDelete }: Props) {
+export default function Sidebar({ projects, activeId, onSelect, onCreate, onDelete, onOpenSettings }: Props) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const [model, setModel] = useState('');
+  const [models, setModels] = useState<PiModel[]>([]);
+
+  useEffect(() => {
+    if (creating) piApi.models().then(setModels).catch(() => setModels([]));
+  }, [creating]);
 
   const submit = () => {
     const trimmed = name.trim();
-    if (trimmed) onCreate(trimmed);
+    if (trimmed) onCreate(trimmed, model || null);
     setName('');
+    setModel('');
     setCreating(false);
   };
 
@@ -56,18 +65,33 @@ export default function Sidebar({ projects, activeId, onSelect, onCreate, onDele
 
       <div className="border-t border-zinc-200 p-2">
         {creating ? (
-          <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submit();
-              if (e.key === 'Escape') setCreating(false);
-            }}
-            onBlur={submit}
-            placeholder="项目名称，回车确认"
-            className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
-          />
+          <div className="space-y-1.5">
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submit();
+                if (e.key === 'Escape') setCreating(false);
+              }}
+              placeholder="项目名称"
+              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
+            />
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              className="w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-xs text-zinc-600 outline-none focus:border-zinc-500"
+            >
+              <option value="">模型：跟随全局默认</option>
+              {models.map((m) => (
+                <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.provider}/{m.id}</option>
+              ))}
+            </select>
+            <div className="flex gap-1.5">
+              <button onClick={submit} className="flex-1 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-700">创建</button>
+              <button onClick={() => setCreating(false)} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-500 hover:bg-zinc-50">取消</button>
+            </div>
+          </div>
         ) : (
           <button
             onClick={() => setCreating(true)}
@@ -76,6 +100,12 @@ export default function Sidebar({ projects, activeId, onSelect, onCreate, onDele
             ＋ 新建项目
           </button>
         )}
+        <button
+          onClick={onOpenSettings}
+          className="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
+        >
+          ⚙ 设置
+        </button>
       </div>
     </aside>
   );

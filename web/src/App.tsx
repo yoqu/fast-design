@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar';
 import ChatPanel from './components/ChatPanel';
 import { Workspace } from './components/Workspace';
 import InstallGuide from './components/InstallGuide';
+import SettingsDialog from './components/settings/SettingsDialog';
 
 const IDLE_GENERATION = deriveGenerationModel({
   busy: false,
@@ -24,6 +25,7 @@ export default function App() {
   const [generation, setGeneration] = useState<GenerationModel>(IDLE_GENERATION);
   const retryRef = useRef<(() => void) | null>(null);
   const [piInstalled, setPiInstalled] = useState<boolean | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   const checkPi = useCallback(async (): Promise<boolean> => {
     try {
@@ -58,9 +60,9 @@ export default function App() {
     void refresh();
   }, [refresh]);
 
-  const createProject = async (name: string) => {
+  const createProject = async (name: string, model?: string | null) => {
     try {
-      const meta = await api.createProject(name);
+      const meta = await api.createProject(name, model);
       await refresh();
       setActiveId(meta.id);
     } catch (err) {
@@ -77,6 +79,12 @@ export default function App() {
     }
   };
 
+  const activeMeta = projects.find((p) => p.id === activeId);
+
+  const onMetaUpdated = (meta: ProjectMeta) => {
+    setProjects((list) => list.map((p) => (p.id === meta.id ? meta : p)));
+  };
+
   if (piInstalled === false) return <InstallGuide onRecheck={checkPi} />;
 
   return (
@@ -87,6 +95,7 @@ export default function App() {
         onSelect={setActiveId}
         onCreate={createProject}
         onDelete={deleteProject}
+        onOpenSettings={() => setShowSettings(true)}
       />
       {activeId ? (
         <>
@@ -96,6 +105,8 @@ export default function App() {
             projectId={activeId}
             generation={generation}
             onRetry={() => retryRef.current?.()}
+            meta={activeMeta}
+            onMetaUpdated={onMetaUpdated}
           />
         </>
       ) : (
@@ -105,6 +116,7 @@ export default function App() {
           {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
         </div>
       )}
+      {showSettings && <SettingsDialog projectId={activeId} onClose={() => setShowSettings(false)} />}
     </div>
   );
 }
