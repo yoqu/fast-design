@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+}
+
+/* Markdown content inside chat bubbles */
+.md :is(h1, h2, h3) { font-weight: 600; margin: 0.6em 0 0.3em; }
+.md h1 { font-size: 1.15rem; }
+.md h2 { font-size: 1.05rem; }
+.md h3 { font-size: 1rem; }
+.md p { margin: 0.4em 0; }
+.md ul, .md ol { margin: 0.4em 0; padding-left: 1.4em; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md pre {
+  background: #f4f4f5;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 0.5em 0;
+}
+.md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+.md :not(pre) > code {
+  background: #f4f4f5;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.md a { color: #2563eb; text-decoration: underline; }
+.md blockquote { border-left: 3px solid #e4e4e7; padding-left: 10px; color: #71717a; margin: 0.5em 0; }
+.md table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.9em; }
+.md th, .md td { border: 1px solid #e4e4e7; padding: 4px 8px; }
