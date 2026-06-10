@@ -47,6 +47,16 @@ describe('listSkills', () => {
     expect(skills.every((s) => s.enabled)).toBe(true);
   });
 
+  it('skips hidden and node_modules directories', () => {
+    const root = path.join(piDir, 'skills');
+    writeSkill(root, 'alpha');
+    fs.mkdirSync(path.join(root, '.git', 'objects'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.git', 'objects', 'SKILL.md'), '---\nname: evil\ndescription: x\n---\n');
+    fs.mkdirSync(path.join(root, 'node_modules', 'pkg'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'node_modules', 'pkg', 'SKILL.md'), '---\nname: dep\ndescription: x\n---\n');
+    expect(listSkills(null).map((s) => s.rel)).toEqual(['alpha']);
+  });
+
   it('reflects disabled state from settings.json patterns (both dir and SKILL.md forms)', () => {
     const root = path.join(piDir, 'skills');
     writeSkill(root, 'alpha');
@@ -104,6 +114,10 @@ describe('create / read / write / delete', () => {
     createSkill('gone', 'x');
     deleteSkill('global', 'gone', null);
     expect(listSkills(null)).toEqual([]);
+  });
+
+  it('rejects empty rel', () => {
+    expect(() => readSkillContent('global', '', null)).toThrow(/BAD_PATH/);
   });
 
   it('rejects path traversal', () => {

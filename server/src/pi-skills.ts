@@ -29,6 +29,7 @@ function skillsRoot(scope: SkillScope, projectDir: string | null): string {
 
 /** rel → 技能内容文件绝对路径（含越界校验）。根级 .md 技能 rel 以 .md 结尾。 */
 function resolveSkillFile(scope: SkillScope, rel: string, projectDir: string | null): string {
+  if (!rel) throw new Error('BAD_PATH: empty rel');
   const root = skillsRoot(scope, projectDir);
   const target = rel.endsWith('.md') ? rel : path.join(rel, 'SKILL.md');
   const abs = path.resolve(root, target);
@@ -116,11 +117,13 @@ function scanRoot(root: string, scope: SkillScope, disabled: Set<string>): Skill
       pushSkill(path.relative(root, dir).split(path.sep).join('/'), path.join(dir, 'SKILL.md'));
       return; // 技能目录不再向下递归
     }
-    for (const d of dirents) if (d.isDirectory()) walk(path.join(dir, d.name));
+    for (const d of dirents) {
+      if (d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules') walk(path.join(dir, d.name));
+    }
   };
   for (const entry of entries) {
     if (entry.isFile() && entry.name.endsWith('.md')) pushSkill(entry.name, path.join(root, entry.name));
-    else if (entry.isDirectory()) walk(path.join(root, entry.name));
+    else if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') walk(path.join(root, entry.name));
   }
   return out.sort((a, b) => a.rel.localeCompare(b.rel));
 }
