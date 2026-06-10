@@ -93,4 +93,18 @@ describe('extensions', () => {
     expect(r.ok).toBe(false);
     expect(r.output).toContain('not found');
   });
+
+  it('serializes truly concurrent operations', async () => {
+    const order: string[] = [];
+    const slow: PiRunner = async (args) => {
+      order.push(`start:${args[1]}`);
+      await new Promise((r) => setTimeout(r, 20));
+      order.push(`end:${args[1]}`);
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    const [a, b] = await Promise.all([installExtension('pkg-a', slow), installExtension('pkg-b', slow)]);
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    expect(order).toEqual(['start:pkg-a', 'end:pkg-a', 'start:pkg-b', 'end:pkg-b']);
+  });
 });

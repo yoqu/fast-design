@@ -13,11 +13,16 @@ export const defaultPiRunner: PiRunner = (args, opts) =>
       args,
       { timeout: opts?.timeoutMs ?? 60_000, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout, stderr) => {
-        const code = (err as NodeJS.ErrnoException | null)?.code;
-        if (err && code === 'ENOENT') return reject(err);
-        if (err && typeof code !== 'number' && !('killed' in err)) return reject(err);
-        const exit = err ? ((err as unknown as { code?: number }).code ?? 1) : 0;
-        resolve({ code: typeof exit === 'number' ? exit : 1, stdout: String(stdout), stderr: String(stderr) });
+        if (!err) {
+          return resolve({ code: 0, stdout: String(stdout), stderr: String(stderr) });
+        }
+        // Node 的 execFile err.code 双态：spawn 失败为字符串（如 ENOENT），非零退出为数字。
+        const raw = (err as NodeJS.ErrnoException).code;
+        const exitCode = typeof raw === 'number' ? raw : null;
+        const spawnCode = typeof raw === 'string' ? raw : null;
+        const killed = Boolean((err as { killed?: boolean }).killed);
+        if (spawnCode && !killed) return reject(err); // 真正的 spawn 失败（ENOENT/EACCES）
+        resolve({ code: exitCode ?? 1, stdout: String(stdout), stderr: String(stderr) });
       },
     );
   });
@@ -46,9 +51,8 @@ export async function listModels(run: PiRunner = defaultPiRunner): Promise<PiMod
   const out: PiModel[] = [];
   for (const line of `${stdout}\n${stderr}`.split('\n')) {
     const cols = line.trim().split(/\s+/);
-    if (cols.length < 2) continue;
+    if (cols.length < 6) continue;
     if (cols[0] === 'provider' && cols[1] === 'model') continue; // header
-    if (cols[0] === 'No') continue; // "No models matching ..."
     out.push({ provider: cols[0], id: cols[1] });
   }
   return out;
@@ -75,6 +79,7 @@ export function validateExtensionSource(source: string): boolean {
 
 export type ExtensionOpResult = { ok: boolean; output: string };
 
+// 单用户场景：无界队列是有意为之，最多积压几个 install/remove。
 let extensionOpRunning: Promise<unknown> = Promise.resolve();
 
 async function runExtensionOp(args: string[], run: PiRunner): Promise<ExtensionOpResult> {
