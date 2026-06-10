@@ -5,6 +5,13 @@ import type { Writable } from 'node:stream';
 import { createJsonLineParser, mapPiEvent } from './pi-events.js';
 import type { JsonRecord, UiEvent } from './types.js';
 
+export type SessionLaunchConfig = {
+  model: string | null;
+  thinking: string | null;
+  /** 追加在内置 SYSTEM_PROMPT_SUFFIX 之后的系统提示段（全局指令、项目指令）。 */
+  appendPrompts: string[];
+};
+
 const SYSTEM_PROMPT_SUFFIX = `
 You are working inside a web studio: the user chats with you in a browser and a
 preview pane renders the project directory over plain static file serving.
@@ -62,7 +69,7 @@ export class PiSession {
 
   constructor(
     private readonly cwd: string,
-    private readonly model: string | null = null,
+    private readonly getConfig: () => SessionLaunchConfig,
   ) {}
 
   get isBusy(): boolean {
@@ -86,13 +93,14 @@ export class PiSession {
       return this.child;
     }
     fs.mkdirSync(this.sessionDir(), { recursive: true });
-    const args = [
-      '--mode', 'rpc',
-      '--session-dir', this.sessionDir(),
-      '--append-system-prompt', SYSTEM_PROMPT_SUFFIX,
-    ];
+    const cfg = this.getConfig();
+    const args = ['--mode', 'rpc', '--session-dir', this.sessionDir()];
+    for (const prompt of [SYSTEM_PROMPT_SUFFIX, ...cfg.appendPrompts]) {
+      args.push('--append-system-prompt', prompt);
+    }
     if (this.hasPriorSessions()) args.push('--continue');
-    if (this.model && this.model !== 'default') args.push('--model', this.model);
+    if (cfg.model && cfg.model !== 'default') args.push('--model', cfg.model);
+    if (cfg.thinking) args.push('--thinking', cfg.thinking);
 
     const child = spawn('pi', args, {
       cwd: this.cwd,

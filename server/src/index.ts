@@ -3,6 +3,7 @@ import path from 'node:path';
 import express from 'express';
 import archiver from 'archiver';
 import { PiSession } from './pi-session.js';
+import type { SessionLaunchConfig } from './pi-session.js';
 import {
   HIDDEN_DIRS,
   PROJECTS_ROOT,
@@ -15,8 +16,15 @@ import {
   projectDir,
   readHistory,
   safeResolve,
+  updateProject,
 } from './projects.js';
+import { registerPiRoutes } from './pi-routes.js';
+import { readWebuiSettings } from './webui-settings.js';
 import { closeProjectWatcher, watchProject } from './watch.js';
+import { listArtifacts } from './artifacts.js';
+import { deleteProjectFile, readProjectFile, renameProjectFile, writeProjectFile } from './files.js';
+import { mintPreviewScope, previewScopeRe, validatePreviewScope } from './preview-scopes.js';
+import { injectSnapshotBridge, wantsSnapshotBridge } from './bridges.js';
 import type { ChatMessage, ToolCall, UiEvent } from './types.js';
 
 const PORT = Number(process.env.PORT) || 4400;
@@ -27,14 +35,32 @@ fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
 
 const sessions = new Map<string, PiSession>();
 
+function launchConfigFor(id: string): SessionLaunchConfig {
+  const meta = getProject(id);
+  const appendPrompts: string[] = [];
+  const globalInstructions = readWebuiSettings().instructions?.trim();
+  if (globalInstructions) appendPrompts.push(globalInstructions);
+  const projectInstructions = meta?.instructions?.trim();
+  if (projectInstructions) appendPrompts.push(projectInstructions);
+  return { model: meta?.model ?? null, thinking: meta?.thinking ?? null, appendPrompts };
+}
+
 function sessionFor(id: string): PiSession {
   let session = sessions.get(id);
   if (!session) {
-    const meta = getProject(id);
-    session = new PiSession(projectDir(id), meta?.model ?? null);
+    session = new PiSession(projectDir(id), () => launchConfigFor(id));
     sessions.set(id, session);
   }
   return session;
+}
+
+function disposeIdleSessions(): void {
+  for (const [id, session] of sessions) {
+    if (!session.isBusy) {
+      session.dispose();
+      sessions.delete(id);
+    }
+  }
 }
 
 // ---- Projects ----
@@ -59,6 +85,27 @@ app.delete('/api/projects/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+app.patch('/api/projects/:id', (req, res) => {
+  const { id } = req.params;
+  if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
+  const pick = (k: string): string | null | undefined => {
+    const v = (req.body ?? {})[k];
+    if (v === undefined) return undefined;
+    return typeof v === 'string' && v.trim() ? v.trim() : null;
+  };
+  const updated = updateProject(id, {
+    model: pick('model'),
+    thinking: pick('thinking'),
+    instructions: pick('instructions'),
+  });
+  const session = sessions.get(id);
+  if (session && !session.isBusy) {
+    session.dispose();
+    sessions.delete(id);
+  }
+  res.json(updated);
+});
+
 app.get('/api/projects/:id/history', (req, res) => {
   if (!getProject(req.params.id)) return res.status(404).json({ error: 'project not found' });
   res.json(readHistory(req.params.id));
@@ -67,6 +114,89 @@ app.get('/api/projects/:id/history', (req, res) => {
 app.get('/api/projects/:id/files', (req, res) => {
   if (!getProject(req.params.id)) return res.status(404).json({ error: 'project not found' });
   res.json(listFiles(req.params.id));
+});
+
+// ---- Artifacts ----
+
+app.get('/api/projects/:id/artifacts', async (req, res) => {
+  if (!getProject(req.params.id)) return res.status(404).json({ error: 'project not found' });
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ artifacts: await listArtifacts(req.params.id) });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// ---- File CRUD ----
+
+function fileErrorStatus(err: unknown): number {
+  const msg = String(err);
+  if (msg.includes('FILE_EXISTS')) return 409;
+  if (msg.includes('BAD_PATH')) return 400;
+  if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return 404;
+  return 500;
+}
+
+function queryPath(req: express.Request): string | null {
+  const value = req.query.path;
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+app.get('/api/projects/:id/file', async (req, res) => {
+  if (!getProject(req.params.id)) return res.status(404).json({ error: 'project not found' });
+  const rel = queryPath(req);
+  if (!rel) return res.status(400).json({ error: 'path is required' });
+  try {
+    const buffer = await readProjectFile(req.params.id, rel);
+    res.setHeader('Cache-Control', 'no-store');
+    res.type(path.extname(rel) || 'text/plain').send(buffer);
+  } catch (err) {
+    res.status(fileErrorStatus(err)).json({ error: String(err) });
+  }
+});
+
+app.put(
+  '/api/projects/:id/file',
+  express.raw({ type: '*/*', limit: '50mb' }),
+  async (req, res) => {
+    if (!getProject(req.params.id)) return res.status(404).json({ error: 'project not found' });
+    const rel = queryPath(req);
+    if (!rel) return res.status(400).json({ error: 'path is required' });
+    const overwrite = req.query.overwrite !== 'false';
+    try {
+      const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      await writeProjectFile(req.params.id, rel, body, { overwrite });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(fileErrorStatus(err)).json({ error: String(err) });
+    }
+  },
+);
+
+app.delete('/api/projects/:id/file', async (req, res) => {
+  if (!getProject(req.params.id)) return res.status(404).json({ error: 'project not found' });
+  const rel = queryPath(req);
+  if (!rel) return res.status(400).json({ error: 'path is required' });
+  try {
+    await deleteProjectFile(req.params.id, rel);
+    res.status(204).end();
+  } catch (err) {
+    res.status(fileErrorStatus(err)).json({ error: String(err) });
+  }
+});
+
+app.post('/api/projects/:id/file/rename', async (req, res) => {
+  if (!getProject(req.params.id)) return res.status(404).json({ error: 'project not found' });
+  const from = typeof req.body?.from === 'string' ? req.body.from : '';
+  const to = typeof req.body?.to === 'string' ? req.body.to : '';
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+  try {
+    await renameProjectFile(req.params.id, from, to);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(fileErrorStatus(err)).json({ error: String(err) });
+  }
 });
 
 // ---- Chat (streaming NDJSON) ----
@@ -154,33 +284,83 @@ app.get('/api/projects/:id/events', (req, res) => {
   });
 });
 
-// ---- Preview (static serving of the project dir) ----
+// ---- Preview (scoped URL serving, ported from open-design project-routes) ----
 
-app.get('/preview/:id/*', (req, res) => {
-  const { id } = req.params;
-  if (!getProject(id)) return res.status(404).send('project not found');
-  const rel = decodeURIComponent((req.params as Record<string, string>)['0'] || '') || 'index.html';
-  if (rel.split('/').some((seg) => HIDDEN_DIRS.has(seg))) return res.status(404).send('not found');
-  let target = safeResolve(id, rel);
-  if (!target) return res.status(400).send('bad path');
-  try {
-    if (fs.statSync(target).isDirectory()) target = path.join(target, 'index.html');
-  } catch {
-    // fall through to sendFile 404 handling
-  }
+const projectPreviewIframeSandbox = 'allow-scripts allow-forms';
+const projectPreviewCsp = [
+  `sandbox ${projectPreviewIframeSandbox}`,
+  "default-src 'self' data: blob:",
+  "img-src 'self' data: blob:",
+  "media-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+].join('; ');
+
+function setProjectPreviewHeaders(res: express.Response): void {
   res.setHeader('Cache-Control', 'no-store');
-  res.sendFile(target, (err) => {
-    if (err && !res.headersSent) {
-      res.status(404).send(`<!doctype html><meta charset="utf-8">
-<body style="font-family:system-ui;color:#888;display:grid;place-items:center;height:100vh;margin:0">
-<div style="text-align:center"><div style="font-size:40px">🛠️</div>
-<p>还没有 <code>${rel}</code> — 让 agent 先生成页面吧</p></div></body>`);
-    }
-  });
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', projectPreviewCsp);
+}
+
+function encodeProjectPathForUrl(filePath: string): string {
+  return filePath.split('/').map((segment) => encodeURIComponent(segment)).join('/');
+}
+
+app.get('/api/projects/:id/preview-url', async (req, res) => {
+  const { id } = req.params;
+  if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
+  try {
+    const requested =
+      typeof req.query.file === 'string' && req.query.file.trim().length > 0
+        ? req.query.file
+        : (await listArtifacts(id))[0]?.manifest.entry ?? 'index.html';
+    const abs = safeResolve(id, requested);
+    if (!abs) return res.status(400).json({ error: 'bad path' });
+    if (!fs.existsSync(abs)) return res.status(404).json({ error: 'file not found' });
+    const scope = mintPreviewScope(id);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      url: `/api/projects/${encodeURIComponent(id)}/preview/${scope}/${encodeProjectPathForUrl(requested)}`,
+      file: requested,
+      csp: projectPreviewCsp,
+      iframeSandbox: projectPreviewIframeSandbox,
+      opaqueOrigin: true,
+    });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
 });
 
-app.get('/preview/:id', (req, res) => {
-  res.redirect(`/preview/${req.params.id}/index.html`);
+app.get(/^\/api\/projects\/([^/]+)\/preview\/([^/]+)\/(.+)$/u, (req, res) => {
+  const params = req.params as unknown as Record<string, string>;
+  const id = String(params['0'] ?? '');
+  const scope = String(params['1'] ?? '');
+  const rel = decodeURIComponent(String(params['2'] ?? ''));
+  if (!previewScopeRe.test(scope)) return res.status(400).send('invalid preview scope');
+  if (!getProject(id)) return res.status(404).send('project not found');
+  if (!validatePreviewScope(id, scope)) return res.status(404).send('preview scope not found');
+  if (rel.split('/').some((seg) => HIDDEN_DIRS.has(seg))) return res.status(404).send('not found');
+  const target = safeResolve(id, rel);
+  if (!target) return res.status(400).send('bad path');
+  if (req.headers.origin === 'null') res.header('Access-Control-Allow-Origin', '*');
+  setProjectPreviewHeaders(res);
+  const isHtml = /\.html?$/i.test(rel);
+  if (isHtml && wantsSnapshotBridge(req.query.bridge)) {
+    try {
+      const html = injectSnapshotBridge(fs.readFileSync(target, 'utf8'));
+      return res.type('html').send(html);
+    } catch {
+      return res.status(404).send('not found');
+    }
+  }
+  res.sendFile(target, (err) => {
+    if (err && !res.headersSent) res.status(404).send('not found');
+  });
 });
 
 // ---- Export (ZIP download) ----
@@ -189,7 +369,22 @@ app.get('/api/projects/:id/export', (req, res) => {
   const { id } = req.params;
   const meta = getProject(id);
   if (!meta) return res.status(404).json({ error: 'project not found' });
-  const filename = `${meta.name.replace(/[^\w一-龥-]+/g, '_') || 'project'}.zip`;
+  // Optional ?root=<top-level dir> scopes the archive to a subdirectory,
+  // mirroring open-design's /archive route.
+  const root = typeof req.query.root === 'string' ? req.query.root.replace(/^\/+|\/+$/g, '') : '';
+  let cwd = projectDir(id);
+  if (root) {
+    const abs = safeResolve(id, root);
+    if (!abs) return res.status(400).json({ error: 'bad root' });
+    try {
+      if (!fs.statSync(abs).isDirectory()) return res.status(400).json({ error: 'root is not a directory' });
+    } catch {
+      return res.status(404).json({ error: 'root not found' });
+    }
+    cwd = abs;
+  }
+  const base = root ? root.split('/').pop()! : meta.name;
+  const filename = `${base.replace(/[^\w一-龥-]+/g, '_') || 'project'}.zip`;
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
   const archive = archiver('zip', { zlib: { level: 9 } });
@@ -200,12 +395,14 @@ app.get('/api/projects/:id/export', (req, res) => {
   });
   archive.pipe(res);
   archive.glob('**/*', {
-    cwd: projectDir(id),
+    cwd,
     ignore: [...HIDDEN_DIRS].map((d) => `${d}/**`),
     dot: true,
   });
   void archive.finalize();
 });
+
+registerPiRoutes(app, { disposeIdleSessions });
 
 app.listen(PORT, () => {
   console.log(`pi-web-studio server: http://localhost:${PORT}`);
