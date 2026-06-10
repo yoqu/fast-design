@@ -34,6 +34,59 @@ export type ProjectMeta = {
   name: string;
   createdAt: number;
   model?: string | null;
+  thinking?: string | null;
+  instructions?: string | null;
 };
 
 export type FileEntry = { path: string; size: number };
+
+// ---- Pi 配置 ----
+
+export type PiStatus = { installed: boolean; version: string | null; piDir: string };
+
+export type PiSettings = {
+  defaultProvider: string | null;
+  defaultModel: string | null;
+  defaultThinkingLevel: string | null;
+};
+
+export type ProviderStatus = {
+  id: string;
+  label: string;
+  envVar: string;
+  configured: boolean;
+  keyTail: string | null;
+  oauth: boolean;
+};
+
+export type CustomModel = { id: string; name?: string; contextWindow?: number };
+
+export type CustomProvider = {
+  id: string;
+  baseUrl: string;
+  api: string;
+  apiKeyTail: string | null;
+  models: CustomModel[];
+};
+
+export type ProvidersResponse = {
+  builtin: ProviderStatus[];
+  extraAuth: string[];
+  custom: CustomProvider[];
+  apis: string[];
+};
+
+export type PiModel = { provider: string; id: string };
+
+export type SkillInfo = {
+  name: string;
+  description: string;
+  rel: string;
+  scope: 'global' | 'project';
+  enabled: boolean;
+};
+
+export type ExtensionInfo = { source: string };
+export type ExtensionOpResult = { ok: boolean; output: string };
+
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;

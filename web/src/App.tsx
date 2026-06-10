@@ -1,14 +1,44 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api } from './lib/api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, piApi } from './lib/api';
 import type { ProjectMeta } from './lib/types';
+import { deriveGenerationModel, type GenerationModel } from './lib/generation';
 import Sidebar from './components/Sidebar';
 import ChatPanel from './components/ChatPanel';
-import PreviewPanel from './components/PreviewPanel';
+import { Workspace } from './components/Workspace';
+import InstallGuide from './components/InstallGuide';
+
+const IDLE_GENERATION = deriveGenerationModel({
+  busy: false,
+  aborted: false,
+  error: null,
+  sawDelta: false,
+  lastActivity: null,
+  lastWrite: null,
+  turnEnded: false,
+});
 
 export default function App() {
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [generation, setGeneration] = useState<GenerationModel>(IDLE_GENERATION);
+  const retryRef = useRef<(() => void) | null>(null);
+  const [piInstalled, setPiInstalled] = useState<boolean | null>(null);
+
+  const checkPi = useCallback(async (): Promise<boolean> => {
+    try {
+      const status = await piApi.status();
+      setPiInstalled(status.installed);
+      return status.installed;
+    } catch {
+      setPiInstalled(true); // server 不可达时不阻塞主界面，由现有 error 流程提示
+      return true;
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkPi();
+  }, [checkPi]);
 
   const refresh = useCallback(async () => {
     try {
@@ -47,6 +77,8 @@ export default function App() {
     }
   };
 
+  if (piInstalled === false) return <InstallGuide onRecheck={checkPi} />;
+
   return (
     <div className="flex h-full bg-white text-zinc-900">
       <Sidebar
@@ -58,8 +90,13 @@ export default function App() {
       />
       {activeId ? (
         <>
-          <ChatPanel key={activeId} projectId={activeId} />
-          <PreviewPanel key={`preview-${activeId}`} projectId={activeId} />
+          <ChatPanel key={activeId} projectId={activeId} onGeneration={setGeneration} retryRef={retryRef} />
+          <Workspace
+            key={`workspace-${activeId}`}
+            projectId={activeId}
+            generation={generation}
+            onRetry={() => retryRef.current?.()}
+          />
         </>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center text-zinc-400">
