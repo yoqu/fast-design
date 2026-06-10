@@ -135,7 +135,7 @@ export function listProviders(): { builtin: ProviderStatus[]; extraAuth: string[
     return {
       ...def,
       configured: value !== undefined,
-      keyTail: key ? key.slice(-4) : null,
+      keyTail: key && key.length >= 4 ? key.slice(-4) : null,
       oauth,
     };
   });
@@ -163,6 +163,9 @@ export function setProviderKey(providerId: string, key: string): void {
 }
 
 export function deleteProviderKey(providerId: string): void {
+  if (!BUILTIN_PROVIDERS.some((d) => d.id === providerId)) {
+    throw new Error(`UNKNOWN_PROVIDER: ${providerId}`);
+  }
   updateJsonConfig<AuthFile>(authPath(), {}, (auth) => {
     assertWritableAuthEntry(auth, providerId);
     delete auth[providerId];
@@ -211,7 +214,7 @@ export function listCustomProviders(): CustomProviderView[] {
       id,
       baseUrl: typeof p.baseUrl === 'string' ? p.baseUrl : '',
       api: typeof p.api === 'string' ? p.api : '',
-      apiKeyTail: apiKey ? apiKey.slice(-4) : null,
+      apiKeyTail: apiKey && apiKey.length >= 4 ? apiKey.slice(-4) : null,
       models: Array.isArray(p.models) ? (p.models as CustomModel[]) : [],
     };
   });

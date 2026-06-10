@@ -112,6 +112,10 @@ describe('providers / auth.json', () => {
   it('rejects unknown provider ids', () => {
     expect(() => setProviderKey('not-a-provider', 'k')).toThrow(/UNKNOWN_PROVIDER/);
   });
+
+  it('rejects deleting unknown provider ids', () => {
+    expect(() => deleteProviderKey('not-a-provider')).toThrow(/UNKNOWN_PROVIDER/);
+  });
 });
 
 describe('custom providers / models.json', () => {
