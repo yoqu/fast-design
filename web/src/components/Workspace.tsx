@@ -2,11 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProjectArtifact } from '../lib/artifacts';
 import type { FileEntry, ProjectMeta } from '../lib/types';
 import type { GenerationModel } from '../lib/generation';
+import type { HandoffInfo } from '../lib/types';
+import type { QuestionForm } from '../lib/questionForm';
 import { api, subscribeProjectEvents } from '../lib/api';
 import { FileViewer } from './FileViewer';
 import { FilesPanel } from './FilesPanel';
 import { GenerationStage } from './GenerationStage';
 import ProjectSettingsDialog from './ProjectSettingsDialog';
+import HandoffButton from './HandoffButton';
+import QuestionsPanel from './QuestionsPanel';
+import WorkingDirPill from './WorkingDirPill';
 
 type Props = {
   projectId: string;
@@ -14,6 +19,19 @@ type Props = {
   onRetry?: () => void;
   meta?: ProjectMeta;
   onMetaUpdated?: (meta: ProjectMeta) => void;
+  /** focus 模式(隐藏聊天面板,工作区全宽)。 */
+  focusMode: boolean;
+  onFocusModeChange: (next: boolean) => void;
+  /** 拖拽分栏进行中:禁用 iframe 指针事件防止吞掉 pointermove。 */
+  interactionDisabled?: boolean;
+  /** URL 深链的目标文件;变化时打开对应标签。 */
+  routeFileName: string | null;
+  /** 活动预览文件变化 → 上层同步进 URL(必须传稳定引用 useCallback)。 */
+  onActiveFileChange?: (file: string | null) => void;
+  /** 最后一条助手消息派生的问题表单;非空时显示 Questions 标签。 */
+  questionForm?: QuestionForm | null;
+  /** Questions 提交 → 发送到对话。 */
+  onSubmitQuestions?: (text: string) => void;
 };
 
 type TabState = { tabs: string[]; active: string | null };
@@ -39,10 +57,12 @@ function loadTabState(projectId: string): TabState {
  * open files above the FileViewer, a files-panel toggle, live-reload via SSE,
  * and "artifact appears → its tab opens" behavior.
  */
-export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated }: Props) {
+export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated, focusMode, onFocusModeChange, interactionDisabled, routeFileName, onActiveFileChange, questionForm, onSubmitQuestions }: Props) {
   const [{ tabs, active }, setTabState] = useState<TabState>(() => loadTabState(projectId));
   const [showFiles, setShowFiles] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showQuestions, setShowQuestions] = useState(false);
+  const [handoff, setHandoff] = useState<HandoffInfo | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
@@ -55,6 +75,18 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated 
   }, [projectId]);
 
   useEffect(() => {
+    let cancelled = false;
+    api.handoffInfo(projectId).then((info) => {
+      if (!cancelled) setHandoff(info);
+    }).catch(() => {
+      if (!cancelled) setHandoff(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
     localStorage.setItem(tabStorageKey(projectId), JSON.stringify({ tabs, active }));
   }, [projectId, tabs, active]);
 
@@ -64,7 +96,23 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated 
       active: path,
     }));
     setShowFiles(false);
+    setShowQuestions(false);
   }, []);
+
+  // URL → 标签:深链/前进后退把目标文件打开为活动标签。
+  useEffect(() => {
+    if (routeFileName) openTab(routeFileName);
+  }, [routeFileName, openTab]);
+
+  // 标签 → URL:活动文件变化回调上层(上层负责 navigate replace)。
+  useEffect(() => {
+    onActiveFileChange?.(showFiles || showQuestions ? null : active);
+  }, [active, showFiles, showQuestions, onActiveFileChange]);
+
+  // 新表单出现自动切到 Questions 标签(对齐参照行为);表单消失自动退出。
+  useEffect(() => {
+    setShowQuestions(!!questionForm);
+  }, [questionForm]);
 
   const closeTab = useCallback((path: string) => {
     setTabState((prev) => {
@@ -125,12 +173,27 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated 
   const stageVisible = generation.phase !== 'idle' && generation.phase !== 'done';
 
   return (
-    <div className="flex h-full w-[46%] min-w-[420px] flex-col border-l border-zinc-200">
+    <div className="flex h-full min-w-0 flex-1 flex-col border-l border-zinc-200">
+      <div className="flex items-center gap-2 border-b border-zinc-200 bg-white px-2 py-1.5">
+        <button
+          type="button"
+          title={focusMode ? '显示聊天' : '隐藏聊天'}
+          aria-label={focusMode ? '显示聊天' : '隐藏聊天'}
+          aria-pressed={focusMode}
+          onClick={() => onFocusModeChange(!focusMode)}
+          className="rounded-md px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+        >
+          {focusMode ? '⟩' : '⟨'}
+        </button>
+        <WorkingDirPill projectId={projectId} dir={handoff?.dir ?? null} />
+        <div className="flex-1" />
+        <HandoffButton projectId={projectId} dir={handoff?.dir ?? null} editors={handoff?.editors ?? []} />
+      </div>
       <div className="flex items-center gap-0.5 border-b border-zinc-200 bg-zinc-50 px-1.5 pt-1.5">
         <div className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto">
           {tabs.map((tab) => {
             const name = tab.slice(tab.lastIndexOf('/') + 1);
-            const isActive = !showFiles && tab === active;
+            const isActive = !showFiles && !showQuestions && tab === active;
             return (
               <div
                 key={tab}
@@ -145,6 +208,7 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated 
                   onClick={() => {
                     setTabState((prev) => ({ ...prev, active: tab }));
                     setShowFiles(false);
+                    setShowQuestions(false);
                   }}
                   className="truncate"
                   title={tab}
@@ -163,9 +227,23 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated 
             );
           })}
         </div>
+        {questionForm && (
+          <button
+            type="button"
+            onClick={() => {
+              setShowQuestions(true);
+              setShowFiles(false);
+            }}
+            className={`mb-1 shrink-0 rounded-md px-2 py-1 text-xs ${
+              showQuestions ? 'bg-zinc-900 text-white' : 'text-amber-600 hover:bg-zinc-100'
+            }`}
+          >
+            问题
+          </button>
+        )}
         <button
           type="button"
-          onClick={() => setShowFiles((v) => !v)}
+          onClick={() => { setShowFiles((v) => !v); setShowQuestions(false); }}
           className={`mb-1 shrink-0 rounded-md px-2 py-1 text-xs ${
             showFiles ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'
           }`}
@@ -183,8 +261,10 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated 
           </button>
         )}
       </div>
-      <div className="relative min-h-0 flex-1 bg-white">
-        {showFiles ? (
+      <div className={`relative min-h-0 flex-1 bg-white ${interactionDisabled ? 'pointer-events-none select-none' : ''}`}>
+        {showQuestions && questionForm ? (
+          <QuestionsPanel form={questionForm} onSubmit={(text) => onSubmitQuestions?.(text)} />
+        ) : showFiles ? (
           <FilesPanel
             projectId={projectId}
             files={files}

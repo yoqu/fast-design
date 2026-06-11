@@ -193,6 +193,9 @@ export default function App() {
             onRetry={() => retryRef.current?.()}
             meta={activeMeta}
             onMetaUpdated={onMetaUpdated}
+            focusMode={false}
+            onFocusModeChange={() => {}}
+            routeFileName={null}
           />
         </>
       ) : (
