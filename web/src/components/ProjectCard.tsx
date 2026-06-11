@@ -35,6 +35,11 @@ export default function ProjectCard({ project, onOpen, onRename, onDelete, selec
     return () => document.removeEventListener('mousedown', onDown);
   }, [menuOpen]);
 
+  // 外部重命名(或卡片复用渲染不同项目)时同步草稿;编辑中不打断。
+  useEffect(() => {
+    if (!editing) setDraft(project.name);
+  }, [project.name, editing]);
+
   const commitRename = () => {
     setEditing(false);
     const name = draft.trim();
@@ -57,13 +62,17 @@ export default function ProjectCard({ project, onOpen, onRename, onDelete, selec
     >
       <div className="pointer-events-none relative h-36 overflow-hidden rounded-t-xl border-b border-zinc-100 bg-zinc-50">
         {entry ? (
-          <iframe
-            src={api.fileUrl(project.id, entry)}
-            sandbox="allow-scripts"
-            tabIndex={-1}
-            title={`${project.name} 预览`}
-            className="h-[576px] w-[400%] origin-top-left scale-[0.25] border-0 bg-white"
-          />
+          <>
+            {/* sandbox 不含 allow-same-origin:缩略图只需渲染,禁 storage/cookie 是有意为之 */}
+            <iframe
+              src={api.fileUrl(project.id, entry)}
+              loading="lazy"
+              sandbox="allow-scripts"
+              tabIndex={-1}
+              title={`${project.name} 预览`}
+              className="h-[576px] w-[400%] origin-top-left scale-[0.25] border-0 bg-white"
+            />
+          </>
         ) : (
           <div className="flex h-full items-center justify-center bg-gradient-to-br from-zinc-100 to-zinc-200 text-3xl font-semibold text-zinc-400">
             {(project.name[0] ?? 'π').toUpperCase()}
@@ -137,7 +146,7 @@ export default function ProjectCard({ project, onOpen, onRename, onDelete, selec
                 className="absolute right-0 top-full z-20 mt-1 w-32 rounded-lg border border-zinc-200 bg-white p-1 text-xs shadow-lg"
                 onClick={(e) => e.stopPropagation()}
               >
-                <button type="button" role="menuitem" className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-zinc-50" onClick={() => onOpen(project.id)}>
+                <button type="button" role="menuitem" className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-zinc-50" onClick={() => { setMenuOpen(false); onOpen(project.id); }}>
                   打开
                 </button>
                 <button
