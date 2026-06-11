@@ -25,7 +25,10 @@ type Props = {
   retryRef?: MutableRefObject<(() => void) | null>;
   /** 注册外部发送函数(QuestionsPanel 提交答案用)。 */
   sendRef?: MutableRefObject<((text: string) => void) | null>;
-  /** 回合结束/历史加载后,把最后一条助手消息全文回调给上层(派生 question-form)。 */
+  /**
+   * 回合结束/历史加载后,把最后一条助手消息全文回调给上层(派生 question-form)。
+   * 必须传稳定引用(useCallback),否则历史加载 effect 会反复重跑。
+   */
   onAssistantText?: (text: string) => void;
   /** 项目的待发提示词；非空时预填 composer 并触发 onConsumePendingPrompt。 */
   pendingPrompt?: string | null;
@@ -59,6 +62,9 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
     turnEnded: false,
   });
   const lastUserText = useRef<string | null>(null);
+  // 本回合流式累积的助手正文;turn 结束后回调 onAssistantText(不能在
+  // setMessages updater 内做——updater 必须纯,StrictMode 会双执行。
+  const liveAssistantText = useRef('');
   // 当前回合的流式请求控制器：卸载（切换会话/项目）时中断读流，
   // 防止旧回合的 finally 把共享的 generation 状态写给新会话。
   const streamAbort = useRef<AbortController | null>(null);
@@ -124,6 +130,7 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
       setBusy(true);
       setStatus('连接中');
       lastUserText.current = text;
+      liveAssistantText.current = '';
       pushGeneration({
         busy: true,
         aborted: false,
@@ -145,6 +152,7 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
             setStatus(ev.label);
             break;
           case 'text_delta':
+            liveAssistantText.current += ev.delta;
             updateLast((m) => ({ ...m, content: m.content + ev.delta }));
             pushGeneration({ sawDelta: true, lastActivity: ev.delta });
             break;
@@ -193,15 +201,10 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
         // 卸载中断（signal aborted）时组件已销毁，跳过全部状态更新，
         // 避免旧回合的收尾写到共享 generation / 新会话的 UI 上。
         if (!controller.signal.aborted) {
-          setMessages((prev) => {
-            const next = prev.map((m) => (m.streaming ? { ...m, streaming: false } : m));
-            const lastAssistant = [...next].reverse().find((m) => m.role === 'assistant');
-            if (lastAssistant) {
-              const text = lastAssistant.content;
-              queueMicrotask(() => onAssistantText?.(text));
-            }
-            return next;
-          });
+          setMessages((prev) =>
+            prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
+          );
+          if (liveAssistantText.current) onAssistantText?.(liveAssistantText.current);
           setBusy(false);
           setStatus(null);
           pushGeneration({ busy: false, turnEnded: true });
