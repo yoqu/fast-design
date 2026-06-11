@@ -64,6 +64,8 @@ export type ProjectMeta = {
   skillId?: string | null;
   pendingPrompt?: string | null;
   metadata?: ProjectMetadata;
+  /** server 派生:该项目是否有正在生成的会话。 */
+  running?: boolean;
 };
 
 export type ConversationMeta = {

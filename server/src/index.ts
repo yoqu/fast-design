@@ -33,6 +33,7 @@ import {
 } from './conversations.js';
 import { importClaudeDesignZip } from './claude-design-import.js';
 import { parseCreateProjectBody } from './project-create.js';
+import { runningProjectIds } from './running.js';
 import { registerPiRoutes } from './pi-routes.js';
 import { readWebuiSettings } from './webui-settings.js';
 import { closeProjectWatcher, watchProject } from './watch.js';
@@ -109,7 +110,8 @@ function disposeIdleSessions(): void {
 // ---- Projects ----
 
 app.get('/api/projects', (_req, res) => {
-  res.json(listProjects());
+  const running = runningProjectIds(sessions);
+  res.json(listProjects().map((p) => ({ ...p, running: running.has(p.id) })));
 });
 
 app.post('/api/projects', (req, res) => {
