@@ -23,14 +23,18 @@ type Props = {
 export default function HomeView({ projects, onOpen, onRename, onDelete, onCreateFromPrompt, onNewProject, onViewAll }: Props) {
   const [prompt, setPrompt] = useState('');
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const recent = sortProjects(projects, 'recent').slice(0, 6);
 
   const submit = async () => {
     const text = prompt.trim();
     if (!text || creating) return;
     setCreating(true);
+    setError(null);
     try {
       await onCreateFromPrompt(text);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建失败');
     } finally {
       setCreating(false);
     }
@@ -45,7 +49,7 @@ export default function HomeView({ projects, onOpen, onRename, onDelete, onCreat
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 void submit();
               }
@@ -53,6 +57,7 @@ export default function HomeView({ projects, onOpen, onRename, onDelete, onCreat
             rows={3}
             placeholder="描述你想做的网页,比如「做一个咖啡店落地页」…"
             className="w-full resize-none bg-transparent px-1 text-sm outline-none"
+            aria-label="项目需求描述"
           />
           <div className="flex items-center justify-between pt-1">
             <button type="button" onClick={onNewProject} className="rounded-lg px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100">
@@ -68,6 +73,7 @@ export default function HomeView({ projects, onOpen, onRename, onDelete, onCreat
             </button>
           </div>
         </div>
+        {error && <p className="mt-2 text-center text-xs text-red-500">{error}</p>}
 
         {recent.length > 0 && (
           <div className="mt-12">
