@@ -170,8 +170,11 @@ export default function App() {
               projectId={activeId}
               conversationId={activeConversationId}
               conversations={conversations}
+              projectName={activeMeta?.name ?? ''}
+              onBack={() => {}}
               onSelectConversation={setActiveConversationId}
               onCreateConversation={createConversation}
+              onRenameConversation={() => {}}
               onDeleteConversation={deleteConversation}
               onGeneration={setGeneration}
               retryRef={retryRef}

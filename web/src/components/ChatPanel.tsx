@@ -5,18 +5,28 @@ import type { ChatMessage, ConversationSummary, ToolCall, UiEvent } from '../lib
 import { deriveGenerationModel, type GenerationInput, type GenerationModel } from '../lib/generation';
 import Composer from './Composer';
 import MessageView from './MessageView';
+import ConversationsMenu from './ConversationsMenu';
 
 type Props = {
   projectId: string;
   conversationId: string;
   conversations: ConversationSummary[];
+  /** 详情页顶部展示的项目名。 */
+  projectName: string;
+  /** 返回项目列表。 */
+  onBack: () => void;
   onSelectConversation: (cid: string) => void;
   onCreateConversation: () => void;
+  onRenameConversation: (cid: string, title: string) => void;
   onDeleteConversation: (cid: string) => void;
   /** Receives the derived generation model on every streaming event. */
   onGeneration?: (model: GenerationModel) => void;
   /** Registers a retry function (re-sends the last user message). */
   retryRef?: MutableRefObject<(() => void) | null>;
+  /** 注册外部发送函数(QuestionsPanel 提交答案用)。 */
+  sendRef?: MutableRefObject<((text: string) => void) | null>;
+  /** 回合结束/历史加载后,把最后一条助手消息全文回调给上层(派生 question-form)。 */
+  onAssistantText?: (text: string) => void;
   /** 项目的待发提示词；非空时预填 composer 并触发 onConsumePendingPrompt。 */
   pendingPrompt?: string | null;
   /** 预填后清除持久化 pendingPrompt（PATCH null）。 */
@@ -33,7 +43,7 @@ function writtenFileFrom(name: string | null, input: unknown): string | null {
   return typeof candidate === 'string' && candidate ? candidate.split('/').pop() ?? null : null;
 }
 
-export default function ChatPanel({ projectId, conversationId, conversations, onSelectConversation, onCreateConversation, onDeleteConversation, onGeneration, retryRef, pendingPrompt, onConsumePendingPrompt }: Props) {
+export default function ChatPanel({ projectId, conversationId, conversations, projectName, onBack, onSelectConversation, onCreateConversation, onRenameConversation, onDeleteConversation, onGeneration, retryRef, sendRef, onAssistantText, pendingPrompt, onConsumePendingPrompt }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -52,8 +62,6 @@ export default function ChatPanel({ projectId, conversationId, conversations, on
   // 当前回合的流式请求控制器：卸载（切换会话/项目）时中断读流，
   // 防止旧回合的 finally 把共享的 generation 状态写给新会话。
   const streamAbort = useRef<AbortController | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const historyMenuRef = useRef<HTMLDivElement>(null);
 
   // 一次性预填触发器：本挂载周期内只从 pendingPrompt 设值一次，之后保持不变
   // （Composer 的 seed effect 不会重跑，不会覆盖用户后续输入）。
@@ -90,8 +98,12 @@ export default function ChatPanel({ projectId, conversationId, conversations, on
       turnEnded: false,
     };
     onGeneration?.(deriveGenerationModel(generationInput.current));
-    api.history(projectId, conversationId).then(setMessages).catch(() => setMessages([]));
-  }, [projectId, conversationId, onGeneration]);
+    api.history(projectId, conversationId).then((msgs) => {
+      setMessages(msgs);
+      const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant');
+      if (lastAssistant) onAssistantText?.(lastAssistant.content);
+    }).catch(() => setMessages([]));
+  }, [projectId, conversationId, onGeneration, onAssistantText]);
 
   useEffect(() => {
     if (stickToBottom.current) {
@@ -181,9 +193,15 @@ export default function ChatPanel({ projectId, conversationId, conversations, on
         // 卸载中断（signal aborted）时组件已销毁，跳过全部状态更新，
         // 避免旧回合的收尾写到共享 generation / 新会话的 UI 上。
         if (!controller.signal.aborted) {
-          setMessages((prev) =>
-            prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
-          );
+          setMessages((prev) => {
+            const next = prev.map((m) => (m.streaming ? { ...m, streaming: false } : m));
+            const lastAssistant = [...next].reverse().find((m) => m.role === 'assistant');
+            if (lastAssistant) {
+              const text = lastAssistant.content;
+              queueMicrotask(() => onAssistantText?.(text));
+            }
+            return next;
+          });
           setBusy(false);
           setStatus(null);
           pushGeneration({ busy: false, turnEnded: true });
@@ -191,7 +209,7 @@ export default function ChatPanel({ projectId, conversationId, conversations, on
         if (streamAbort.current === controller) streamAbort.current = null;
       }
     },
-    [projectId, conversationId, updateLast, pushGeneration],
+    [projectId, conversationId, updateLast, pushGeneration, onAssistantText],
   );
 
   useEffect(() => {
@@ -203,6 +221,16 @@ export default function ChatPanel({ projectId, conversationId, conversations, on
       retryRef.current = null;
     };
   }, [retryRef, send]);
+
+  useEffect(() => {
+    if (!sendRef) return;
+    sendRef.current = (text: string) => {
+      if (!generationInput.current.busy) void send(text);
+    };
+    return () => {
+      sendRef.current = null;
+    };
+  }, [sendRef, send]);
 
   const stop = useCallback(() => {
     pushGeneration({ aborted: true });
@@ -220,79 +248,29 @@ export default function ChatPanel({ projectId, conversationId, conversations, on
     };
   }, [projectId, conversationId]);
 
-  // 外点关闭历史菜单。
-  useEffect(() => {
-    if (!historyOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (!historyMenuRef.current?.contains(e.target as Node)) setHistoryOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [historyOpen]);
-
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col bg-white">
-      <div className="flex items-center gap-1 border-b border-zinc-200 px-3 py-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800">
-          {conversations.find((c) => c.id === conversationId)?.title ?? '未命名对话'}
-        </span>
+      <div className="flex items-center gap-2 border-b border-zinc-200 px-3 py-2">
         <button
           type="button"
-          title="新对话"
-          onClick={onCreateConversation}
-          className="rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+          title="返回项目列表"
+          aria-label="返回项目列表"
+          onClick={onBack}
+          className="rounded-md px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
         >
-          ＋ 新对话
+          ←
         </button>
-        <div className="relative" ref={historyMenuRef}>
-          <button
-            type="button"
-            title="对话历史"
-            aria-expanded={historyOpen}
-            onClick={() => setHistoryOpen((v) => !v)}
-            className={`rounded-md px-2 py-1 text-xs ${historyOpen ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}
-          >
-            历史
-          </button>
-          {historyOpen ? (
-            <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-64 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg">
-              {conversations.map((c) => (
-                <div
-                  key={c.id}
-                  className={`group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs ${
-                    c.id === conversationId ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-600 hover:bg-zinc-50'
-                  }`}
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="min-w-0 flex-1 truncate text-left"
-                    onClick={() => {
-                      setHistoryOpen(false);
-                      if (c.id !== conversationId) onSelectConversation(c.id);
-                    }}
-                  >
-                    <span className="block truncate">{c.title ?? '未命名对话'}</span>
-                    <span className="text-[10px] text-zinc-400">{c.messageCount} 条消息</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="删除对话"
-                    className="rounded px-1 text-zinc-300 opacity-0 hover:bg-zinc-200 hover:text-red-500 group-hover:opacity-100"
-                    onClick={() => {
-                      if (confirm(`删除对话「${c.title ?? '未命名对话'}」？此操作不可恢复。`)) {
-                        setHistoryOpen(false);
-                        onDeleteConversation(c.id);
-                      }
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800" title={projectName}>
+          {projectName}
+        </span>
+        <ConversationsMenu
+          conversations={conversations}
+          activeId={conversationId}
+          onSelect={onSelectConversation}
+          onCreate={onCreateConversation}
+          onRename={onRenameConversation}
+          onDelete={onDeleteConversation}
+        />
       </div>
       <div
         ref={scrollRef}
