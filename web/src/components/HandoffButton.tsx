@@ -9,8 +9,8 @@ const PREFERRED_EDITOR_KEY = 'webui:handoff.editor';
 
 function cliCommands(dir: string): Array<{ label: string; command: string }> {
   return [
-    { label: 'Claude Code', command: `cd ${dir} && claude "继续开发这个项目"` },
-    { label: 'Codex', command: `cd ${dir} && codex "继续开发这个项目"` },
+    { label: 'Claude Code', command: `cd "${dir}" && claude "继续开发这个项目"` },
+    { label: 'Codex', command: `cd "${dir}" && codex "继续开发这个项目"` },
   ];
 }
 
@@ -24,6 +24,7 @@ export default function HandoffButton({ projectId, dir, editors }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const copyTimerRef = useRef<number | null>(null);
 
   const installed = editors.filter((e) => e.installed);
   const [preferredId, setPreferredId] = useState<string | null>(() => {
@@ -34,6 +35,12 @@ export default function HandoffButton({ projectId, dir, editors }: Props) {
     }
   });
   const preferred = installed.find((e) => e.id === preferredId) ?? installed[0] ?? null;
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -126,11 +133,15 @@ export default function HandoffButton({ projectId, dir, editors }: Props) {
                       <span className="font-medium text-zinc-600">{c.label}</span>
                       <button
                         type="button"
-                        onClick={() => {
-                          void navigator.clipboard.writeText(c.command).then(() => {
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(c.command);
                             setCopied(c.label);
-                            setTimeout(() => setCopied(null), 1500);
-                          });
+                            if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+                            copyTimerRef.current = window.setTimeout(() => setCopied(null), 1500);
+                          } catch {
+                            setError('复制失败:浏览器不支持或非安全上下文');
+                          }
                         }}
                         className="rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100"
                       >

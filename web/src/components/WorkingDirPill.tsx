@@ -29,7 +29,7 @@ export default function WorkingDirPill({ projectId, dir }: Props) {
         aria-expanded={open}
         aria-haspopup="menu"
         title={dir}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { setOpen((v) => !v); setError(null); }}
         className="flex max-w-48 items-center gap-1.5 rounded-full border border-zinc-200 px-2.5 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
       >
         <span>📁</span>
@@ -55,9 +55,9 @@ export default function WorkingDirPill({ projectId, dir }: Props) {
           >
             在文件管理器中显示
           </button>
-          {error && <p className="px-2 py-1 text-red-500">{error}</p>}
         </div>
       )}
+      {error && <p className="absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-red-50 px-2 py-1 text-[10px] text-red-600">{error}</p>}
     </div>
   );
 }
