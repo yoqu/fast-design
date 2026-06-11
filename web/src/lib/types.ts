@@ -29,14 +29,51 @@ export type ChatMessage = {
   streaming?: boolean;
 };
 
+export type ProjectPlatform =
+  | 'responsive'
+  | 'web-desktop'
+  | 'mobile-ios'
+  | 'mobile-android'
+  | 'tablet'
+  | 'desktop-app';
+
+export type ProjectFidelity = 'wireframe' | 'high-fidelity';
+
+/** 对齐 open-design ProjectMetadata（裁剪到 prototype 链路）。 */
+export type ProjectMetadata = {
+  kind: 'prototype';
+  platformTargets?: ProjectPlatform[];
+  fidelity?: ProjectFidelity;
+  includeLandingPage?: boolean;
+  includeOsWidgets?: boolean;
+  nameSource?: 'user' | 'generated';
+  importedFrom?: 'claude-design' | 'folder' | null;
+  entryFile?: string | null;
+  sourceFileName?: string | null;
+  baseDir?: string | null;
+};
+
 export type ProjectMeta = {
   id: string;
   name: string;
   createdAt: number;
+  updatedAt?: number;
   model?: string | null;
   thinking?: string | null;
   instructions?: string | null;
+  skillId?: string | null;
+  pendingPrompt?: string | null;
+  metadata?: ProjectMetadata;
 };
+
+export type ConversationMeta = {
+  id: string;
+  title: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ConversationSummary = ConversationMeta & { messageCount: number };
 
 export type FileEntry = { path: string; size: number };
 

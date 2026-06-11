@@ -1,14 +1,22 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 type Props = {
   busy: boolean;
+  /** 一次性预填文本（pendingPrompt）；变为非空时填入输入框并聚焦。 */
+  seed?: string | null;
   onSend: (message: string) => void;
   onStop: () => void;
 };
 
-export default function Composer({ busy, onSend, onStop }: Props) {
+export default function Composer({ busy, seed, onSend, onStop }: Props) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!seed) return;
+    setValue(seed);
+    textareaRef.current?.focus();
+  }, [seed]);
 
   const send = () => {
     const message = value.trim();

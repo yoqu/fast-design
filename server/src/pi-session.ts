@@ -54,7 +54,7 @@ function replyExtensionUi(stdin: Writable, raw: JsonRecord): void {
 }
 
 /**
- * One long-lived `pi --mode rpc` process per project. pi keeps the RPC
+ * One long-lived `pi --mode rpc` process per conversation. pi keeps the RPC
  * process alive across prompts, so consecutive turns share conversation
  * context naturally. If the process dies, the next prompt respawns it with
  * --continue so history (stored under <cwd>/.pi-webui-sessions) is restored.
@@ -70,6 +70,8 @@ export class PiSession {
   constructor(
     private readonly cwd: string,
     private readonly getConfig: () => SessionLaunchConfig,
+    /** 本会话（conversation）专属的 pi --session-dir，互不串上下文。 */
+    private readonly sessionDirPath: string,
   ) {}
 
   get isBusy(): boolean {
@@ -77,7 +79,7 @@ export class PiSession {
   }
 
   private sessionDir(): string {
-    return path.join(this.cwd, '.webui', 'pi-sessions');
+    return this.sessionDirPath;
   }
 
   private hasPriorSessions(): boolean {

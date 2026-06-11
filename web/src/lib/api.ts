@@ -1,5 +1,6 @@
-import type { ChatMessage, CustomModel, CustomProvider, ExtensionInfo, ExtensionOpResult, FileEntry, PiModel, PiSettings, PiStatus, ProjectMeta, ProvidersResponse, SkillInfo, UiEvent } from './types';
+import type { ChatMessage, ConversationMeta, ConversationSummary, CustomModel, CustomProvider, ExtensionInfo, ExtensionOpResult, FileEntry, PiModel, PiSettings, PiStatus, ProjectMeta, ProvidersResponse, SkillInfo, UiEvent } from './types';
 import type { PreviewUrlResponse, ProjectArtifact } from './artifacts';
+import type { CreateProjectRequest } from './newProject';
 
 function encodePath(path: string): string {
   return path.split('/').map((seg) => encodeURIComponent(seg)).join('/');
@@ -21,23 +22,58 @@ async function json<T>(res: Response): Promise<T> {
 
 export const api = {
   listProjects: () => fetch('/api/projects').then((r) => json<ProjectMeta[]>(r)),
-  createProject: (name: string, model?: string | null) =>
+  createProject: (input: CreateProjectRequest) =>
     fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, model: model ?? null }),
+      body: JSON.stringify(input),
     }).then((r) => json<ProjectMeta>(r)),
-  updateProject: (id: string, patch: { model?: string | null; thinking?: string | null; instructions?: string | null }) =>
+  updateProject: (
+    id: string,
+    patch: {
+      name?: string;
+      model?: string | null;
+      thinking?: string | null;
+      instructions?: string | null;
+      skillId?: string | null;
+      pendingPrompt?: string | null;
+    },
+  ) =>
     fetch(`/api/projects/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     }).then((r) => json<ProjectMeta>(r)),
+  importClaudeDesign: (file: File) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return fetch('/api/import/claude-design', { method: 'POST', body: form }).then((r) =>
+      json<{ project: ProjectMeta; entryFile: string; files: string[] }>(r),
+    );
+  },
   deleteProject: (id: string) =>
     fetch(`/api/projects/${id}`, { method: 'DELETE' }).then((r) => json<{ ok: boolean }>(r)),
-  history: (id: string) => fetch(`/api/projects/${id}/history`).then((r) => json<ChatMessage[]>(r)),
+  conversations: (id: string) =>
+    fetch(`/api/projects/${id}/conversations`)
+      .then((r) => json<{ conversations: ConversationSummary[] }>(r))
+      .then((b) => b.conversations),
+  createConversation: (id: string, title?: string | null) =>
+    fetch(`/api/projects/${id}/conversations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: title ?? null }),
+    })
+      .then((r) => json<{ conversation: ConversationMeta }>(r))
+      .then((b) => b.conversation),
+  deleteConversation: (id: string, cid: string) =>
+    fetch(`/api/projects/${id}/conversations/${cid}`, { method: 'DELETE' }).then((r) =>
+      json<{ ok: boolean }>(r),
+    ),
+  history: (id: string, cid: string) =>
+    fetch(`/api/projects/${id}/conversations/${cid}/history`).then((r) => json<ChatMessage[]>(r)),
   files: (id: string) => fetch(`/api/projects/${id}/files`).then((r) => json<FileEntry[]>(r)),
-  abort: (id: string) => fetch(`/api/projects/${id}/abort`, { method: 'POST' }),
+  abort: (id: string, cid: string) =>
+    fetch(`/api/projects/${id}/conversations/${cid}/abort`, { method: 'POST' }),
   exportUrl: (id: string, root?: string) =>
     `/api/projects/${id}/export${root ? `?root=${encodeURIComponent(root)}` : ''}`,
   artifacts: (id: string) =>
@@ -87,11 +123,12 @@ export { encodePath };
  */
 export async function streamChat(
   projectId: string,
+  conversationId: string,
   message: string,
   onEvent: (ev: UiEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`/api/projects/${projectId}/chat`, {
+  const res = await fetch(`/api/projects/${projectId}/conversations/${conversationId}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),

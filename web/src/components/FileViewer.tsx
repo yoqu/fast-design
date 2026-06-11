@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectArtifact } from '../lib/artifacts';
+import { reduceTweaksMessage } from '../lib/tweaks';
 import { api } from '../lib/api';
 import type { GenerationModel } from '../lib/generation';
 import { GenerationStage } from './GenerationStage';
@@ -61,13 +62,19 @@ type Props = {
  */
 export function FileViewer({ projectId, file, artifact, files, reloadKey, generation, onRetry }: Props) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [sandbox, setSandbox] = useState('allow-scripts allow-forms');
+  const [sandbox, setSandbox] = useState('allow-scripts allow-downloads');
   const [error, setError] = useState<string | null>(null);
   const [viewport, setViewport] = useState<PreviewViewportId>('desktop');
   const [zoom, setZoom] = useState(100);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
   const [localReload, setLocalReload] = useState(0);
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number } | null>(null);
+  // Tweaks 宿主协议 Protocol A（参照 design-templates/tweaks/SKILL.md:145-185）：
+  // artifact 挂载时向 parent 发 __edit_mode_available（缺省 visible 视为 true），
+  // 宿主工具栏据此启用 Tweaks 开关；点击向 iframe 发 __activate/__deactivate_edit_mode；
+  // artifact 本地关闭（×/Esc）会发 __edit_mode_dismissed，开关回拨为关。
+  const [tweaksAvailable, setTweaksAvailable] = useState(false);
+  const [tweaksOn, setTweaksOn] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const zoomMenuRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -113,6 +120,37 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
 
   const refresh = useCallback(() => setLocalReload((v) => v + 1), []);
 
+  // 预览文档更换（含刷新）后重置 Tweaks 可用性，等 artifact 重新上报。
+  useEffect(() => {
+    setTweaksAvailable(false);
+    setTweaksOn(false);
+  }, [previewUrl, reloadKey, localReload]);
+
+  useEffect(() => {
+    const onMessage = (ev: MessageEvent) => {
+      if (!ev.data || ev.source !== iframeRef.current?.contentWindow) return;
+      const action = reduceTweaksMessage(ev.data);
+      if (!action) return;
+      if (action.available !== undefined) setTweaksAvailable(action.available);
+      if (action.on !== undefined) setTweaksOn(action.on);
+      // 默认开启时回送激活指令，强制 iframe 面板与工具栏开关一致展开，
+      // 避免开关显「开」却没面板、需双击才唤起的错位。
+      if (action.command) (ev.source as Window).postMessage({ type: action.command }, '*');
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+
+  const toggleTweaks = useCallback(() => {
+    const frame = iframeRef.current?.contentWindow;
+    if (!frame) return;
+    setTweaksOn((prev) => {
+      const next = !prev;
+      frame.postMessage({ type: next ? '__activate_edit_mode' : '__deactivate_edit_mode' }, '*');
+      return next;
+    });
+  }, []);
+
   const openInNewWindow = useCallback(() => {
     if (previewUrl) window.open(previewUrl, '_blank', 'noopener,noreferrer');
   }, [previewUrl]);
@@ -138,7 +176,11 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
     } as const;
   }, [viewport, previewScale, scale, preset.width, preset.height]);
 
-  const stageVisible = generation.phase !== 'idle' && generation.phase !== 'done';
+  // 对齐参照 generation-preview.ts:161-170：FileViewer 打开即存在可预览面
+  // （hasPreviewSurface），此时生成中/停止/等待输入一律不遮罩，预览保持可
+  // 交互；仅明确失败时显示错误舞台。首次生成（无 tab）的完整舞台由
+  // Workspace 空态承担。
+  const stageVisible = generation.phase === 'failed';
   const iframeKey = `${previewUrl ?? ''}:${reloadKey}:${localReload}`;
 
   return (
@@ -193,6 +235,19 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
         <span className="truncate text-xs text-zinc-400" title={file}>
           {artifact?.manifest.title || file}
         </span>
+        {tweaksAvailable ? (
+          <button
+            type="button"
+            onClick={toggleTweaks}
+            title="Tweaks 面板"
+            aria-pressed={tweaksOn}
+            className={`rounded-md px-2 py-1 text-xs ${
+              tweaksOn ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'
+            }`}
+          >
+            Tweaks
+          </button>
+        ) : null}
         <button type="button" onClick={refresh} title="刷新预览" className="rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100">
           ⟳
         </button>

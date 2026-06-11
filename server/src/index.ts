@@ -1,23 +1,38 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import express from 'express';
+import multer from 'multer';
 import archiver from 'archiver';
 import { PiSession } from './pi-session.js';
 import type { SessionLaunchConfig } from './pi-session.js';
 import {
+  DATA_ROOT,
   HIDDEN_DIRS,
   PROJECTS_ROOT,
-  appendHistory,
   createProject,
+  decodeMultipartFilename,
   deleteProject,
   getProject,
   listFiles,
   listProjects,
   projectDir,
-  readHistory,
   safeResolve,
+  touchProject,
   updateProject,
 } from './projects.js';
+import {
+  appendConversationHistory,
+  createConversation,
+  deleteConversation,
+  getConversation,
+  listConversations,
+  piSessionDirFor,
+  readConversationHistory,
+  updateConversation,
+} from './conversations.js';
+import { importClaudeDesignZip } from './claude-design-import.js';
+import { parseCreateProjectBody } from './project-create.js';
 import { registerPiRoutes } from './pi-routes.js';
 import { readWebuiSettings } from './webui-settings.js';
 import { closeProjectWatcher, watchProject } from './watch.js';
@@ -33,7 +48,23 @@ app.use(express.json({ limit: '2mb' }));
 
 fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
 
+const UPLOAD_DIR = path.join(DATA_ROOT, 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const importUpload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (_req, file, cb) => {
+      // busboy 把非 ASCII 文件名按 latin1 给出；先修复再落临时名。
+      file.originalname = decodeMultipartFilename(file.originalname);
+      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.zip`);
+    },
+  }),
+  limits: { fileSize: 100 * 1024 * 1024 },
+});
+
 const sessions = new Map<string, PiSession>();
+
+const sessionKey = (projectId: string, cid: string) => `${projectId}:${cid}`;
 
 function launchConfigFor(id: string): SessionLaunchConfig {
   const meta = getProject(id);
@@ -45,20 +76,32 @@ function launchConfigFor(id: string): SessionLaunchConfig {
   return { model: meta?.model ?? null, thinking: meta?.thinking ?? null, appendPrompts };
 }
 
-function sessionFor(id: string): PiSession {
-  let session = sessions.get(id);
+function sessionFor(id: string, cid: string): PiSession {
+  const key = sessionKey(id, cid);
+  let session = sessions.get(key);
   if (!session) {
-    session = new PiSession(projectDir(id), () => launchConfigFor(id));
-    sessions.set(id, session);
+    session = new PiSession(projectDir(id), () => launchConfigFor(id), piSessionDirFor(id, cid));
+    sessions.set(key, session);
   }
   return session;
 }
 
+/** dispose 项目下全部（或仅空闲）pi 会话。 */
+function disposeProjectSessions(id: string, onlyIdle = false): void {
+  const prefix = `${id}:`;
+  for (const [key, session] of sessions) {
+    if (!key.startsWith(prefix)) continue;
+    if (onlyIdle && session.isBusy) continue;
+    session.dispose();
+    sessions.delete(key);
+  }
+}
+
 function disposeIdleSessions(): void {
-  for (const [id, session] of sessions) {
+  for (const [key, session] of sessions) {
     if (!session.isBusy) {
       session.dispose();
-      sessions.delete(id);
+      sessions.delete(key);
     }
   }
 }
@@ -70,16 +113,20 @@ app.get('/api/projects', (_req, res) => {
 });
 
 app.post('/api/projects', (req, res) => {
-  const name = typeof req.body?.name === 'string' ? req.body.name : '';
-  const model = typeof req.body?.model === 'string' ? req.body.model : null;
-  res.json(createProject(name, model));
+  const input = parseCreateProjectBody(req.body);
+  res.json(
+    createProject(input.name, input.model, {
+      skillId: input.skillId,
+      pendingPrompt: input.pendingPrompt,
+      metadata: input.metadata,
+    }),
+  );
 });
 
 app.delete('/api/projects/:id', (req, res) => {
   const { id } = req.params;
   if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
-  sessions.get(id)?.dispose();
-  sessions.delete(id);
+  disposeProjectSessions(id);
   closeProjectWatcher(id);
   deleteProject(id);
   res.json({ ok: true });
@@ -88,32 +135,182 @@ app.delete('/api/projects/:id', (req, res) => {
 app.patch('/api/projects/:id', (req, res) => {
   const { id } = req.params;
   if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
+  const body = (req.body ?? {}) as Record<string, unknown>;
   const pick = (k: string): string | null | undefined => {
-    const v = (req.body ?? {})[k];
+    const v = body[k];
     if (v === undefined) return undefined;
     return typeof v === 'string' && v.trim() ? v.trim() : null;
   };
   const updated = updateProject(id, {
+    name: typeof body.name === 'string' ? body.name : undefined,
     model: pick('model'),
     thinking: pick('thinking'),
     instructions: pick('instructions'),
+    skillId: pick('skillId'),
+    pendingPrompt: pick('pendingPrompt'),
   });
-  const session = sessions.get(id);
-  if (session && !session.isBusy) {
-    session.dispose();
-    sessions.delete(id);
+  // 字段出现即视为有修改意图（含 null 清除；非字符串值经 pick 归一化为 null）。
+  // pendingPrompt 不在列表内：清除待发提示词不应重启 pi 进程。
+  const affectsSession = ['model', 'thinking', 'instructions', 'skillId'].some((k) => body[k] !== undefined);
+  if (affectsSession) {
+    disposeProjectSessions(id, true);
   }
   res.json(updated);
 });
 
-app.get('/api/projects/:id/history', (req, res) => {
-  if (!getProject(req.params.id)) return res.status(404).json({ error: 'project not found' });
-  res.json(readHistory(req.params.id));
+// ---- Conversations ----
+
+app.get('/api/projects/:id/conversations', async (req, res) => {
+  const { id } = req.params;
+  if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
+  res.json({ conversations: await listConversations(id) });
+});
+
+app.post('/api/projects/:id/conversations', (req, res) => {
+  const { id } = req.params;
+  if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
+  const title = typeof req.body?.title === 'string' ? req.body.title : null;
+  res.json({ conversation: createConversation(id, title) });
+});
+
+app.patch('/api/projects/:id/conversations/:cid', (req, res) => {
+  const { id, cid } = req.params;
+  if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
+  const title = req.body?.title;
+  const updated = updateConversation(id, cid, {
+    title: title === undefined ? undefined : typeof title === 'string' ? title : null,
+  });
+  if (!updated) return res.status(404).json({ error: 'conversation not found' });
+  res.json({ conversation: updated });
+});
+
+app.delete('/api/projects/:id/conversations/:cid', (req, res) => {
+  const { id, cid } = req.params;
+  if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
+  const key = sessionKey(id, cid);
+  sessions.get(key)?.dispose();
+  sessions.delete(key);
+  if (!deleteConversation(id, cid)) return res.status(404).json({ error: 'conversation not found' });
+  res.json({ ok: true });
+});
+
+app.get('/api/projects/:id/conversations/:cid/history', (req, res) => {
+  const { id, cid } = req.params;
+  if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
+  if (!getConversation(id, cid)) return res.status(404).json({ error: 'conversation not found' });
+  res.json(readConversationHistory(id, cid));
+});
+
+app.post('/api/projects/:id/conversations/:cid/abort', (req, res) => {
+  sessions.get(sessionKey(req.params.id, req.params.cid))?.abort();
+  res.json({ ok: true });
+});
+
+app.post('/api/projects/:id/conversations/:cid/chat', async (req, res) => {
+  const { id, cid } = req.params;
+  if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
+  if (!getConversation(id, cid)) return res.status(404).json({ error: 'conversation not found' });
+  const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+  if (!message) return res.status(400).json({ error: 'message is required' });
+
+  const session = sessionFor(id, cid);
+  if (session.isBusy) return res.status(409).json({ error: 'agent 正忙，请先停止当前回合' });
+
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.flushHeaders();
+
+  appendConversationHistory(id, cid, { role: 'user', content: message, createdAt: Date.now() });
+
+  // Accumulate the assistant turn so it can be persisted once finished.
+  const assistant: ChatMessage = { role: 'assistant', content: '', createdAt: Date.now() };
+  const tools: ToolCall[] = [];
+
+  const emit = (ev: UiEvent) => {
+    switch (ev.type) {
+      case 'text_delta':
+        assistant.content += ev.delta;
+        break;
+      case 'thinking_delta':
+        assistant.thinking = (assistant.thinking ?? '') + ev.delta;
+        break;
+      case 'tool_use':
+        tools.push({ id: ev.id, name: ev.name, input: ev.input });
+        break;
+      case 'tool_result': {
+        const call = tools.find((t) => t.id === ev.toolUseId && t.result === undefined) ?? tools.at(-1);
+        if (call) {
+          call.result = ev.content.length > 4000 ? `${ev.content.slice(0, 4000)}\n…(截断)` : ev.content;
+          call.isError = ev.isError;
+        }
+        break;
+      }
+      case 'error':
+        assistant.error = ev.message;
+        break;
+    }
+    res.write(`${JSON.stringify(ev)}\n`);
+  };
+
+  req.on('close', () => {
+    // Client went away mid-turn: stop the agent so it doesn't burn tokens.
+    if (session.isBusy) session.abort();
+  });
+
+  await session.prompt(message, emit);
+  if (tools.length > 0) assistant.tools = tools;
+  appendConversationHistory(id, cid, assistant);
+  res.write(`${JSON.stringify({ type: 'done' } satisfies UiEvent)}\n`);
+  res.end();
 });
 
 app.get('/api/projects/:id/files', (req, res) => {
   if (!getProject(req.params.id)) return res.status(404).json({ error: 'project not found' });
   res.json(listFiles(req.params.id));
+});
+
+// ---- Import ----
+
+app.post('/api/import/claude-design', importUpload.single('file'), async (req, res) => {
+  let createdDir: string | null = null;
+  try {
+    if (!req.file) return res.status(400).json({ error: 'zip file required' });
+    const originalName = req.file.originalname || 'Claude Design export.zip';
+    if (!/\.zip$/i.test(originalName)) {
+      await fs.promises.unlink(req.file.path).catch(() => {});
+      return res.status(400).json({ error: 'expected a .zip file' });
+    }
+    const id = crypto.randomBytes(6).toString('hex');
+    const baseName = originalName.replace(/\.zip$/i, '').trim() || 'Claude Design import';
+    createdDir = projectDir(id);
+    const imported = await importClaudeDesignZip(req.file.path, createdDir);
+    await fs.promises.unlink(req.file.path).catch(() => {});
+    const project = createProject(baseName, null, {
+      id,
+      pendingPrompt: `Imported from Claude Design ZIP: ${originalName}. Continue editing ${imported.entryFile}.`,
+      metadata: {
+        kind: 'prototype',
+        importedFrom: 'claude-design',
+        entryFile: imported.entryFile,
+        sourceFileName: originalName,
+      },
+    });
+    res.json({ project, entryFile: imported.entryFile, files: imported.files });
+  } catch (err) {
+    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+    if (createdDir) fs.rmSync(createdDir, { recursive: true, force: true });
+    res.status(400).json({ error: String(err) });
+  }
+});
+
+// multer 自身的错误（如超过 100MB 限制）发生在进入上方 handler 之前，
+// 不兜住会落到 Express 默认错误页（500 + HTML）。这里转成结构化 400。
+app.use('/api/import/claude-design', (err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err instanceof multer.MulterError) {
+    const message = err.code === 'LIMIT_FILE_SIZE' ? 'zip exceeds the 100MB upload limit' : err.message;
+    return res.status(400).json({ error: message });
+  }
+  next(err);
 });
 
 // ---- Artifacts ----
@@ -167,6 +364,7 @@ app.put(
     try {
       const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       await writeProjectFile(req.params.id, rel, body, { overwrite });
+      touchProject(req.params.id);
       res.json({ ok: true });
     } catch (err) {
       res.status(fileErrorStatus(err)).json({ error: String(err) });
@@ -180,6 +378,7 @@ app.delete('/api/projects/:id/file', async (req, res) => {
   if (!rel) return res.status(400).json({ error: 'path is required' });
   try {
     await deleteProjectFile(req.params.id, rel);
+    touchProject(req.params.id);
     res.status(204).end();
   } catch (err) {
     res.status(fileErrorStatus(err)).json({ error: String(err) });
@@ -193,74 +392,11 @@ app.post('/api/projects/:id/file/rename', async (req, res) => {
   if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
   try {
     await renameProjectFile(req.params.id, from, to);
+    touchProject(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(fileErrorStatus(err)).json({ error: String(err) });
   }
-});
-
-// ---- Chat (streaming NDJSON) ----
-
-app.post('/api/projects/:id/chat', async (req, res) => {
-  const { id } = req.params;
-  if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
-  const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
-  if (!message) return res.status(400).json({ error: 'message is required' });
-
-  const session = sessionFor(id);
-  if (session.isBusy) return res.status(409).json({ error: 'agent 正忙，请先停止当前回合' });
-
-  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.flushHeaders();
-
-  appendHistory(id, { role: 'user', content: message, createdAt: Date.now() });
-
-  // Accumulate the assistant turn so it can be persisted once finished.
-  const assistant: ChatMessage = { role: 'assistant', content: '', createdAt: Date.now() };
-  const tools: ToolCall[] = [];
-
-  const emit = (ev: UiEvent) => {
-    switch (ev.type) {
-      case 'text_delta':
-        assistant.content += ev.delta;
-        break;
-      case 'thinking_delta':
-        assistant.thinking = (assistant.thinking ?? '') + ev.delta;
-        break;
-      case 'tool_use':
-        tools.push({ id: ev.id, name: ev.name, input: ev.input });
-        break;
-      case 'tool_result': {
-        const call = tools.find((t) => t.id === ev.toolUseId && t.result === undefined) ?? tools.at(-1);
-        if (call) {
-          call.result = ev.content.length > 4000 ? `${ev.content.slice(0, 4000)}\n…(截断)` : ev.content;
-          call.isError = ev.isError;
-        }
-        break;
-      }
-      case 'error':
-        assistant.error = ev.message;
-        break;
-    }
-    res.write(`${JSON.stringify(ev)}\n`);
-  };
-
-  req.on('close', () => {
-    // Client went away mid-turn: stop the agent so it doesn't burn tokens.
-    if (session.isBusy) session.abort();
-  });
-
-  await session.prompt(message, emit);
-  if (tools.length > 0) assistant.tools = tools;
-  appendHistory(id, assistant);
-  res.write(`${JSON.stringify({ type: 'done' } satisfies UiEvent)}\n`);
-  res.end();
-});
-
-app.post('/api/projects/:id/abort', (req, res) => {
-  sessions.get(req.params.id)?.abort();
-  res.json({ ok: true });
 });
 
 // ---- File change events (SSE) ----
@@ -286,25 +422,18 @@ app.get('/api/projects/:id/events', (req, res) => {
 
 // ---- Preview (scoped URL serving, ported from open-design project-routes) ----
 
-const projectPreviewIframeSandbox = 'allow-scripts allow-forms';
-const projectPreviewCsp = [
-  `sandbox ${projectPreviewIframeSandbox}`,
-  "default-src 'self' data: blob:",
-  "img-src 'self' data: blob:",
-  "media-src 'self' data: blob:",
-  "font-src 'self' data:",
-  "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-  "connect-src 'none'",
-  "form-action 'none'",
-  "base-uri 'none'",
-  "object-src 'none'",
-].join('; ');
+// 对齐参照 FileViewer 实际使用的 raw 路由语义（open-design
+// project-routes.ts:2205-2257 + FileViewer.tsx sandbox="allow-scripts
+// allow-downloads"）：预览响应不带 CSP——Claude Design 导出的页面依赖
+// unpkg 等 CDN 脚本与 Babel 对同目录 .jsx 的 XHR，严格 CSP（script-src
+// 'self' / connect-src 'none'）会让页面整体失效。隔离仍由 iframe sandbox
+// 的 opaque origin + scope token 提供；opaque origin 的 fetch 经下方
+// Origin:null → ACAO:* 放行（同参照）。
+const projectPreviewIframeSandbox = 'allow-scripts allow-downloads';
 
 function setProjectPreviewHeaders(res: express.Response): void {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Security-Policy', projectPreviewCsp);
 }
 
 function encodeProjectPathForUrl(filePath: string): string {
@@ -327,7 +456,6 @@ app.get('/api/projects/:id/preview-url', async (req, res) => {
     res.json({
       url: `/api/projects/${encodeURIComponent(id)}/preview/${scope}/${encodeProjectPathForUrl(requested)}`,
       file: requested,
-      csp: projectPreviewCsp,
       iframeSandbox: projectPreviewIframeSandbox,
       opaqueOrigin: true,
     });

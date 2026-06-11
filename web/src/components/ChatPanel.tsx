@@ -1,17 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { api, streamChat } from '../lib/api';
-import type { ChatMessage, ToolCall, UiEvent } from '../lib/types';
+import type { ChatMessage, ConversationSummary, ToolCall, UiEvent } from '../lib/types';
 import { deriveGenerationModel, type GenerationInput, type GenerationModel } from '../lib/generation';
 import Composer from './Composer';
 import MessageView from './MessageView';
 
 type Props = {
   projectId: string;
+  conversationId: string;
+  conversations: ConversationSummary[];
+  onSelectConversation: (cid: string) => void;
+  onCreateConversation: () => void;
+  onDeleteConversation: (cid: string) => void;
   /** Receives the derived generation model on every streaming event. */
   onGeneration?: (model: GenerationModel) => void;
   /** Registers a retry function (re-sends the last user message). */
   retryRef?: MutableRefObject<(() => void) | null>;
+  /** 项目的待发提示词；非空时预填 composer 并触发 onConsumePendingPrompt。 */
+  pendingPrompt?: string | null;
+  /** 预填后清除持久化 pendingPrompt（PATCH null）。 */
+  onConsumePendingPrompt?: () => void;
 };
 
 const WRITE_TOOL_RE = /write|edit|patch|create/i;
@@ -24,7 +33,7 @@ function writtenFileFrom(name: string | null, input: unknown): string | null {
   return typeof candidate === 'string' && candidate ? candidate.split('/').pop() ?? null : null;
 }
 
-export default function ChatPanel({ projectId, onGeneration, retryRef }: Props) {
+export default function ChatPanel({ projectId, conversationId, conversations, onSelectConversation, onCreateConversation, onDeleteConversation, onGeneration, retryRef, pendingPrompt, onConsumePendingPrompt }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -40,6 +49,24 @@ export default function ChatPanel({ projectId, onGeneration, retryRef }: Props) 
     turnEnded: false,
   });
   const lastUserText = useRef<string | null>(null);
+  // 当前回合的流式请求控制器：卸载（切换会话/项目）时中断读流，
+  // 防止旧回合的 finally 把共享的 generation 状态写给新会话。
+  const streamAbort = useRef<AbortController | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const historyMenuRef = useRef<HTMLDivElement>(null);
+
+  // 一次性预填触发器：本挂载周期内只从 pendingPrompt 设值一次，之后保持不变
+  // （Composer 的 seed effect 不会重跑，不会覆盖用户后续输入）。
+  const [composerSeed, setComposerSeed] = useState<string | null>(null);
+  const consumedPendingPrompt = useRef(false);
+
+  useEffect(() => {
+    if (consumedPendingPrompt.current) return;
+    if (!pendingPrompt?.trim()) return;
+    consumedPendingPrompt.current = true;
+    setComposerSeed(pendingPrompt);
+    onConsumePendingPrompt?.();
+  }, [pendingPrompt, onConsumePendingPrompt]);
 
   const pushGeneration = useCallback(
     (patch: Partial<GenerationInput>) => {
@@ -63,8 +90,8 @@ export default function ChatPanel({ projectId, onGeneration, retryRef }: Props) 
       turnEnded: false,
     };
     onGeneration?.(deriveGenerationModel(generationInput.current));
-    api.history(projectId).then(setMessages).catch(() => setMessages([]));
-  }, [projectId, onGeneration]);
+    api.history(projectId, conversationId).then(setMessages).catch(() => setMessages([]));
+  }, [projectId, conversationId, onGeneration]);
 
   useEffect(() => {
     if (stickToBottom.current) {
@@ -140,22 +167,31 @@ export default function ChatPanel({ projectId, onGeneration, retryRef }: Props) 
         }
       };
 
+      const controller = new AbortController();
+      streamAbort.current = controller;
       try {
-        await streamChat(projectId, text, handleEvent);
+        await streamChat(projectId, conversationId, text, handleEvent, controller.signal);
       } catch (err) {
-        const message = err instanceof Error ? err.message : '请求失败';
-        updateLast((m) => ({ ...m, error: message }));
-        pushGeneration({ error: message });
+        if (!controller.signal.aborted) {
+          const message = err instanceof Error ? err.message : '请求失败';
+          updateLast((m) => ({ ...m, error: message }));
+          pushGeneration({ error: message });
+        }
       } finally {
-        setMessages((prev) =>
-          prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
-        );
-        setBusy(false);
-        setStatus(null);
-        pushGeneration({ busy: false, turnEnded: true });
+        // 卸载中断（signal aborted）时组件已销毁，跳过全部状态更新，
+        // 避免旧回合的收尾写到共享 generation / 新会话的 UI 上。
+        if (!controller.signal.aborted) {
+          setMessages((prev) =>
+            prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
+          );
+          setBusy(false);
+          setStatus(null);
+          pushGeneration({ busy: false, turnEnded: true });
+        }
+        if (streamAbort.current === controller) streamAbort.current = null;
       }
     },
-    [projectId, updateLast, pushGeneration],
+    [projectId, conversationId, updateLast, pushGeneration],
   );
 
   useEffect(() => {
@@ -170,11 +206,94 @@ export default function ChatPanel({ projectId, onGeneration, retryRef }: Props) 
 
   const stop = useCallback(() => {
     pushGeneration({ aborted: true });
-    void api.abort(projectId);
-  }, [projectId, pushGeneration]);
+    void api.abort(projectId, conversationId);
+  }, [projectId, conversationId, pushGeneration]);
+
+  // 卸载时若 busy，中止当前回合（切换会话/项目）：先断客户端读流（避免
+  // finally 写共享 generation 状态），再请求服务端 abort。
+  useEffect(() => {
+    return () => {
+      if (generationInput.current.busy) {
+        streamAbort.current?.abort();
+        void api.abort(projectId, conversationId);
+      }
+    };
+  }, [projectId, conversationId]);
+
+  // 外点关闭历史菜单。
+  useEffect(() => {
+    if (!historyOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!historyMenuRef.current?.contains(e.target as Node)) setHistoryOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [historyOpen]);
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col bg-white">
+      <div className="flex items-center gap-1 border-b border-zinc-200 px-3 py-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800">
+          {conversations.find((c) => c.id === conversationId)?.title ?? '未命名对话'}
+        </span>
+        <button
+          type="button"
+          title="新对话"
+          onClick={onCreateConversation}
+          className="rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+        >
+          ＋ 新对话
+        </button>
+        <div className="relative" ref={historyMenuRef}>
+          <button
+            type="button"
+            title="对话历史"
+            aria-expanded={historyOpen}
+            onClick={() => setHistoryOpen((v) => !v)}
+            className={`rounded-md px-2 py-1 text-xs ${historyOpen ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}
+          >
+            历史
+          </button>
+          {historyOpen ? (
+            <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-64 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg">
+              {conversations.map((c) => (
+                <div
+                  key={c.id}
+                  className={`group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs ${
+                    c.id === conversationId ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-600 hover:bg-zinc-50'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="min-w-0 flex-1 truncate text-left"
+                    onClick={() => {
+                      setHistoryOpen(false);
+                      if (c.id !== conversationId) onSelectConversation(c.id);
+                    }}
+                  >
+                    <span className="block truncate">{c.title ?? '未命名对话'}</span>
+                    <span className="text-[10px] text-zinc-400">{c.messageCount} 条消息</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="删除对话"
+                    className="rounded px-1 text-zinc-300 opacity-0 hover:bg-zinc-200 hover:text-red-500 group-hover:opacity-100"
+                    onClick={() => {
+                      if (confirm(`删除对话「${c.title ?? '未命名对话'}」？此操作不可恢复。`)) {
+                        setHistoryOpen(false);
+                        onDeleteConversation(c.id);
+                      }
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
       <div
         ref={scrollRef}
         onScroll={(e) => {
@@ -199,7 +318,7 @@ export default function ChatPanel({ projectId, onGeneration, retryRef }: Props) 
           {status}
         </div>
       )}
-      <Composer busy={busy} onSend={send} onStop={stop} />
+      <Composer busy={busy} seed={composerSeed} onSend={send} onStop={stop} />
     </div>
   );
 }

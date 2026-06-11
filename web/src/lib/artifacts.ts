@@ -52,7 +52,6 @@ export interface ProjectArtifact {
 export interface PreviewUrlResponse {
   url: string;
   file: string;
-  csp: string;
   iframeSandbox: string;
   opaqueOrigin: boolean;
 }

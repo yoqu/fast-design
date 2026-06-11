@@ -18,7 +18,7 @@ type Props = {
 
 type TabState = { tabs: string[]; active: string | null };
 
-function tabStorageKey(projectId: string): string {
+export function tabStorageKey(projectId: string): string {
   return `webui:tabs:${projectId}`;
 }
 
