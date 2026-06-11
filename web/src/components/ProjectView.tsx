@@ -218,10 +218,15 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
         frame = null;
       }
       if (pendingX !== null) {
-        apply(pendingX);
+        // setState 在本事件内不会同步重渲,chatWidthRef 还停在上一帧;
+        // 用刚算出的终值持久化,避免存入差一帧的宽度。
+        const finalWidth = clampChatPanelWidth(startWidth + pendingX - startX);
         pendingX = null;
+        setChatWidth(finalWidth);
+        saveChatPanelWidth(finalWidth);
+      } else {
+        saveChatPanelWidth(chatWidthRef.current);
       }
-      saveChatPanelWidth(chatWidthRef.current);
       cleanup();
     };
     const onCancel = () => {
