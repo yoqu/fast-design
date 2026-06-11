@@ -1,5 +1,5 @@
 // web/src/components/QuestionsPanel.tsx
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormQuestion, QuestionForm } from '../lib/questionForm';
 
 type Props = {
@@ -13,14 +13,19 @@ type Answers = Record<string, string | string[]>;
 
 function answerText(q: FormQuestion, value: string | string[] | undefined): string | null {
   if (value === undefined) return null;
-  const text = Array.isArray(value) ? value.join('、') : value;
-  if (!text.trim()) return null;
+  const text = (Array.isArray(value) ? value.join('、') : value).trim();
+  if (!text) return null;
   return `**${q.label}**:${text}`;
 }
 
 /** Questions 面板,对齐参照 QuestionsPanel(题型裁剪到 5 种基础类型)。 */
 export default function QuestionsPanel({ form, onSubmit, disabled }: Props) {
   const [answers, setAnswers] = useState<Answers>({});
+
+  // 新表单到来(对象引用变化,form.id 可能为 null 不可依赖)时清空旧答案。
+  useEffect(() => {
+    setAnswers({});
+  }, [form]);
 
   const set = (id: string, value: string | string[]) => setAnswers((prev) => ({ ...prev, [id]: value }));
 
@@ -84,7 +89,7 @@ export default function QuestionsPanel({ form, onSubmit, disabled }: Props) {
                 >
                   <option value="">请选择…</option>
                   {(q.options ?? []).map((o) => (
-                    <option key={o.value} value={o.value}>
+                    <option key={o.value} value={o.value} title={o.description}>
                       {o.label}
                     </option>
                   ))}
