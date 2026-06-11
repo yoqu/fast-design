@@ -19,7 +19,7 @@ Spec: `docs/superpowers/specs/2026-06-11-visual-text-edit-design.md`
 - Modify: `server/src/index.ts:484-495`（预览路由 HTML 分支）
 - Test: `server/src/bridges.test.ts`
 
-- [ ] **Step 1: 写失败测试**（追加到 `server/src/bridges.test.ts`，import 行同步加 `injectTextEditBridge, wantsTextEditBridge`）
+- [x] **Step 1: 写失败测试**（追加到 `server/src/bridges.test.ts`，import 行同步加 `injectTextEditBridge, wantsTextEditBridge`）
 
 ```ts
 describe('wantsTextEditBridge', () => {
@@ -49,12 +49,12 @@ describe('injectTextEditBridge', () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `pnpm -C server exec vitest run src/bridges.test.ts`
 Expected: FAIL（`wantsTextEditBridge` 未导出）
 
-- [ ] **Step 3: 实现 bridge 脚本与 helpers**（追加到 `server/src/bridges.ts` 末尾；注意：TS 模板字符串内正则反斜杠需双写）
+- [x] **Step 3: 实现 bridge 脚本与 helpers**（追加到 `server/src/bridges.ts` 末尾；注意：TS 模板字符串内正则反斜杠需双写）
 
 ```ts
 // 文案编辑 bridge（本项目自研，协议见
@@ -281,12 +281,12 @@ export function injectTextEditBridge(html: string): string {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `pnpm -C server exec vitest run src/bridges.test.ts`
 Expected: PASS（全部用例）
 
-- [ ] **Step 5: 接入预览路由**（`server/src/index.ts` 预览正则路由内，替换现有 `const isHtml ...` 起的 HTML 分支；import 行加 `injectTextEditBridge, wantsTextEditBridge`）
+- [x] **Step 5: 接入预览路由**（`server/src/index.ts` 预览正则路由内，替换现有 `const isHtml ...` 起的 HTML 分支；import 行加 `injectTextEditBridge, wantsTextEditBridge`）
 
 ```ts
   const isHtml = /\.html?$/i.test(rel);
@@ -304,7 +304,7 @@ Expected: PASS（全部用例）
   }
 ```
 
-- [ ] **Step 6: server 全量测试 + 提交**
+- [x] **Step 6: server 全量测试 + 提交**
 
 Run: `pnpm -C server test && pnpm -C server build`
 Expected: PASS / 无类型错误
@@ -322,7 +322,7 @@ git commit -m "feat(server): 预览文案编辑 bridge 注入（?bridge=edit）"
 - Create: `web/src/lib/textEdit.ts`
 - Test: `web/src/lib/textEdit.test.ts`
 
-- [ ] **Step 1: 写失败测试**（新建 `web/src/lib/textEdit.test.ts`）
+- [x] **Step 1: 写失败测试**（新建 `web/src/lib/textEdit.test.ts`）
 
 ```ts
 import { describe, expect, it } from 'vitest';
@@ -454,12 +454,12 @@ describe('encodeHtmlText', () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `pnpm -C web exec vitest run src/lib/textEdit.test.ts`
 Expected: FAIL（模块不存在）
 
-- [ ] **Step 3: 实现**（新建 `web/src/lib/textEdit.ts`）
+- [x] **Step 3: 实现**（新建 `web/src/lib/textEdit.ts`）
 
 ```ts
 // 预览可视化文案编辑的纯函数层（设计见
@@ -660,12 +660,12 @@ export function applyTextEdits(source: string, edits: TextEditOp[]): string | nu
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `pnpm -C web exec vitest run src/lib/textEdit.test.ts`
 Expected: PASS（全部用例）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/lib/textEdit.ts web/src/lib/textEdit.test.ts
@@ -681,7 +681,7 @@ git commit -m "feat(web): 文案编辑纯逻辑层（消息折算 + 文本区域
 
 无组件单测先例，本任务靠 tsc/build + Task 4 手动验证。
 
-- [ ] **Step 1: 引入依赖与状态**
+- [x] **Step 1: 引入依赖与状态**
 
 import 区加：
 
@@ -706,7 +706,7 @@ import { applyTextEdits, reduceTextEditMessage, type TextEditCommit } from '../l
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
 ```
 
-- [ ] **Step 2: reload 冻结 + 文件切换重置**
+- [x] **Step 2: reload 冻结 + 文件切换重置**
 
 ```ts
   useEffect(() => {
@@ -747,7 +747,7 @@ previewUrl effect 的依赖里 `reloadKey` 改为 `frozenReloadKey`，URL 改带
   const iframeKey = `${previewUrl ?? ''}:${frozenReloadKey}:${localReload}`;
 ```
 
-- [ ] **Step 3: 提交管道与撤销**
+- [x] **Step 3: 提交管道与撤销**
 
 ```ts
   const handleTextEditCommit = useCallback(
@@ -804,7 +804,7 @@ previewUrl effect 的依赖里 `reloadKey` 改为 `frozenReloadKey`，URL 改带
   }, []);
 ```
 
-- [ ] **Step 4: 消息处理**
+- [x] **Step 4: 消息处理**
 
 现有 `onMessage` effect 中、`reduceTweaksMessage` 之前插入（effect 依赖数组改为 `[handleTextEditCommit]`）：
 
@@ -820,7 +820,7 @@ previewUrl effect 的依赖里 `reloadKey` 改为 `frozenReloadKey`，URL 改带
       }
 ```
 
-- [ ] **Step 5: 工具栏 UI**（Tweaks 按钮之后、⟳ 之前插入）
+- [x] **Step 5: 工具栏 UI**（Tweaks 按钮之后、⟳ 之前插入）
 
 ```tsx
         {textEditStatus.kind !== 'idle' ? (
@@ -856,7 +856,7 @@ previewUrl effect 的依赖里 `reloadKey` 改为 `frozenReloadKey`，URL 改带
         ) : null}
 ```
 
-- [ ] **Step 6: 类型检查 + web 测试 + 提交**
+- [x] **Step 6: 类型检查 + web 测试 + 提交**
 
 Run: `pnpm -C web build && pnpm -C web test`
 Expected: 构建通过、测试全绿
@@ -870,16 +870,16 @@ git commit -m "feat(web): FileViewer 接入可视化文案编辑（开关/提交
 
 ### Task 4: 全量验证
 
-- [ ] **Step 1: 全仓测试与构建**
+- [x] **Step 1: 全仓测试与构建**
 
 Run: `pnpm test && pnpm build`
 Expected: server + web 测试全绿、构建通过
 
-- [ ] **Step 2: 手动 e2e（pnpm dev）**
+- [x] **Step 2: 手动 e2e（pnpm dev）**
 
 按 spec 第 6 节验收：静态 HTML 编辑写回、`<p>Hello <b>world</b></p>` 混排、`&amp;` 实体、撤销、JSX 渲染页报错还原、编辑模式中 agent 改文件不打断。
 
-- [ ] **Step 3: 收尾提交（如有验证产生的修正）**
+- [x] **Step 3: 收尾提交（如有验证产生的修正）**
 
 ```bash
 git add -A && git commit -m "fix: 文案编辑手动验证修正"
