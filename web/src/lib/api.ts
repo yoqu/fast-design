@@ -69,6 +69,14 @@ export const api = {
     fetch(`/api/projects/${id}/conversations/${cid}`, { method: 'DELETE' }).then((r) =>
       json<{ ok: boolean }>(r),
     ),
+  renameConversation: (id: string, cid: string, title: string) =>
+    fetch(`/api/projects/${id}/conversations/${cid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    })
+      .then((r) => json<{ conversation: ConversationMeta }>(r))
+      .then((b) => b.conversation),
   history: (id: string, cid: string) =>
     fetch(`/api/projects/${id}/conversations/${cid}/history`).then((r) => json<ChatMessage[]>(r)),
   files: (id: string) => fetch(`/api/projects/${id}/files`).then((r) => json<FileEntry[]>(r)),
