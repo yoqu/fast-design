@@ -1,5 +1,7 @@
 node_modules/
-data/
 dist/
-*.log
+data/
 .DS_Store
+*.log
+*.tsbuildinfo
+.claude/
