@@ -113,6 +113,7 @@ export default function ProjectCard({ project, onOpen, onRename, onDelete, selec
               title={project.name}
               onDoubleClick={(e) => {
                 e.stopPropagation();
+                if (selectMode) return;
                 setDraft(project.name);
                 setEditing(true);
               }}
