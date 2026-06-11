@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectEditors, EDITOR_CANDIDATES } from './handoff.js';
+import { detectEditors, EDITOR_CANDIDATES, openInEditor } from './handoff.js';
 
 describe('detectEditors', () => {
   it('darwin 下 /Applications 命中即 installed', () => {
@@ -22,5 +22,11 @@ describe('detectEditors', () => {
   it('返回全部候选且顺序稳定', () => {
     const out = detectEditors({ platform: 'linux', exists: () => false, hasBin: () => false });
     expect(out.map((e) => e.id)).toEqual(EDITOR_CANDIDATES.map((c) => c.id));
+  });
+});
+
+describe('openInEditor', () => {
+  it('未知编辑器返回 false', () => {
+    expect(openInEditor('not-an-editor', '/tmp')).toBe(false);
   });
 });

@@ -48,7 +48,11 @@ export function detectEditors(
 }
 
 function spawnDetached(cmd: string, args: string[]): void {
-  spawn(cmd, args, { stdio: 'ignore', detached: true }).unref();
+  spawn(cmd, args, { stdio: 'ignore', detached: true })
+    .on('error', () => {
+      // fire-and-forget:命令不存在等失败静默忽略,不能炸掉 server。
+    })
+    .unref();
 }
 
 /** 在系统文件管理器中显示目录。 */
@@ -62,7 +66,14 @@ export function revealDir(dir: string): void {
 export function openInEditor(editorId: string, dir: string): boolean {
   const c = EDITOR_CANDIDATES.find((e) => e.id === editorId);
   if (!c) return false;
-  if (process.platform === 'darwin' && c.app) {
+  const appPath = c.app ? `/Applications/${c.app}` : null;
+  const homeAppPath = c.app ? `${process.env.HOME ?? ''}/Applications/${c.app}` : null;
+  const appInstalled =
+    process.platform === 'darwin' &&
+    !!c.app &&
+    ((appPath !== null && fs.existsSync(appPath)) || (homeAppPath !== null && fs.existsSync(homeAppPath)));
+  if (appInstalled && c.app) {
+    // open -a 接受去掉 .app 的显示名(macOS 约定)。
     spawnDetached('open', ['-a', c.app.replace(/\.app$/, ''), dir]);
   } else {
     spawnDetached(c.bin, [dir]);
