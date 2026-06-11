@@ -60,7 +60,7 @@ bridge 行为：
   2. `contenteditable=plaintext-only`（不支持则 `true`）+ `spellcheck=false`，按点击位置落 caret；
   3. Enter=提交（preventDefault）、Esc=取消还原、blur=提交。
 - **提交**：逐节点 diff（节点被浏览器移除视为 `newText:''`），有变化则发 `pi:edit:commit`；等待 `pi:edit:result`，失败把各节点 `nodeValue` 还原为旧值。
-- **undo 回放**：收到 `pi:edit:apply {matchText, occurrence, newText}` 时，找文档中第 occurrence 个 `nodeValue===matchText` 的文本节点改值（宿主撤销后同步 DOM，免 reload）。
+- **撤销不经 bridge**：宿主撤销直接写回快照并重载 iframe（见 4.3），bridge 无需 undo 协议。
 - **load 即发 `pi:edit:ready`**：宿主若开关仍开，重发 activate（覆盖手动刷新场景）。
 
 ### 4.2 web/src/lib/textEdit.ts —— 纯逻辑层（仿 tweaks.ts，便于测试）
@@ -78,42 +78,45 @@ reduceTextEditMessage(data): { ready?: true; active?: boolean; commit?: TextEdit
 ```ts
 applyTextEdits(source: string, edits: TextEditOp[]): string | null  // 任一失败返回 null（原子）
 applyTextEditToSource(source, op): string | null
-invertEdits(edits): TextEditOp[]  // 撤销用
+encodeHtmlText(text): string
+htmlTextRegions(source): Array<{ start: number; end: number }>
 ```
 
-`applyTextEditToSource` 依次用三种策略在源码中枚举匹配并取第 `occurrence` 个：
+同一 commit 内若多个 op 的 `oldText` 相同，按 `occurrence` 降序应用，避免前一次替换使后续序号偏移。
 
-1. **raw**：`oldText` 逐个 `indexOf`（源码无实体、无换行差异时命中）；
-2. **entity**：`oldText` 做最小实体编码（`&→&amp;`、`<→&lt;`、`>→&gt;`）后枚举；
-3. **宽松正则**：逐字符构造——可实体化字符用替代选（如 `(?:&amp;|&)`、`"|&quot;`、`'|&#39;|&apos;`），` ` 用 `(?:&nbsp;|&#160;|&#xa0;| )`，其余非 ASCII 字符附加数字实体替代选（`&#十进制;|&#x十六进制;`），`\n` 用 `\r?\n`，其余 regex-escape。
+`applyTextEditToSource` 用**单一宽松正则**在源码中枚举匹配并取第 `occurrence` 个（宽松正则天然涵盖 raw 与实体编码两种形态，避免多策略在「混合编码的相同文案」场景下选错序号）：
 
-替换文本统一最小实体编码（`& < >`）后写入，保证源码合法；DOM 解码后仍等于 `newText`，故连续二次编辑会落在策略 2。匹配数 ≤ occurrence 即该策略失败，三策略全败返回 null（典型场景：脚本渲染文本）。
+- 逐字符构造：可实体化字符用替代选（`&→(?:&amp;|&)`、`<`、`>`、`"`、`'` 同理），不换行空格用 `(?:&nbsp;|&#160;|&#[xX]a0;|\u00a0)`，其余非 ASCII 字符附加数字实体替代选（`&#十进制;|&#[xX]十六进制;`，十六进制按字符类大小写容忍），`\n` 用 `(?:\r?\n|&#10;)`，其余 regex-escape。
+
+**文本区域掩码（关键正确性约束）**：`htmlTextRegions(source)` 用轻量状态机扫出「元素文本内容」区间——跳过标签内部（含属性值）、注释、`script/style/textarea/noscript` 原始文本内容（`title` 保留，与 DOM TreeWalker 口径一致）。只有完全落在文本区间内的匹配才参与 occurrence 计数，防止把属性值或脚本字符串里的同名文本当成第 n 处替换掉。bridge 侧的可编辑判定与 occurrence 计数同样跳过 `script/style/noscript/textarea`。
+
+替换文本统一最小实体编码（`& < >`）后写入，保证源码合法；DOM 解码后仍等于 `newText`，连续二次编辑仍可由宽松正则命中实体形态。文本区间内匹配数 ≤ occurrence 则返回 null（典型场景：脚本渲染文本）。
 
 ### 4.3 FileViewer.tsx —— 宿主集成
 
-- 状态：`textEditOn`、`textEditStatus: {kind:'idle'|'saving'|'saved'|'error', message?}`、`undoStack: TextEditOp[][]`、`pendingReload`（冻结期暂存的 reloadKey/localReload）。
+- 状态：`textEditOn`、`textEditStatus: {kind:'idle'|'saving'|'saved'|'error', message?}`、`undoStack: string[]`（提交前整文件源码快照，上限 50，切文件清空）、`frozenReloadKey`（冻结期沿用的 reloadKey）。
 - 工具栏：Tweaks 旁新增「文案」toggle（仅 `/\.html?$/i` 文件显示，`aria-pressed`，样式同 Tweaks 按钮）；undo 栈非空时显示「撤销」；右侧小字状态（保存中…/已保存/错误信息）。
 - previewUrl 改为 `?bridge=snapshot,edit`（仅 html 时带 edit）。
 - 消息处理沿用现有 `onMessage`（校验 `ev.source === iframe.contentWindow`）：
   - `ready` → 若 `textEditOn` 重发 activate；
   - `commit` → 入串行队列：`api.readFile` → `applyTextEdits` → `api.putFile` → 入 undo 栈 → 回 `pi:edit:result {ok:true}`；任一步失败回 `{ok:false, reason}` 并置 error 状态。
-- **reload 冻结**：`textEditOn` 期间 `reloadKey/localReload` 变化仅记入 pending，不重建 previewUrl/iframe；退出编辑模式时若有 pending 则应用（重挂 iframe）。文档化副作用：编辑模式下 agent 改文件不会即时反映，退出后刷新。
-- **撤销**：取栈顶 `invertEdits` 走同一写盘管道，成功后对每条反向 op 发 `pi:edit:apply` 同步 DOM。
+- **reload 冻结**：`textEditOn` 期间外部 `reloadKey` 变化不透传（`frozenReloadKey` 不更新），不重建 previewUrl/iframe；退出编辑模式时同步到最新值（若有变化即重挂 iframe）。手动刷新（`localReload`）不冻结——用户显式操作。文档化副作用：编辑模式下 agent 改文件不会即时反映，退出后刷新。
+- **撤销**：弹出栈顶源码快照 → `putFile(快照)` → `localReload+1` 重载 iframe（bridge `ready` 后自动重新激活）。比逐 op 反演简单且无序号漂移风险；代价仅撤销时丢滚动位置。
 - 切换文件/项目时强制退出编辑模式并清空栈。
 
 ### 4.4 错误处理
 
 | 场景 | 行为 |
 |---|---|
-| 三策略均未命中（脚本渲染文本等） | 不写盘；回 `{ok:false}`，bridge 还原 DOM；状态栏「无法在源码中定位该文本（可能由脚本生成）」 |
+| 文本区间内未命中（脚本渲染文本等） | 不写盘；回 `{ok:false}`，bridge 还原 DOM；状态栏「无法在源码中定位该文本（可能由脚本生成）」 |
 | readFile/putFile 网络错误 | 同上，展示错误信息 |
 | 多节点提交部分失败 | 原子：全部成功才写盘，否则整体还原 |
-| 撤销时源码已被外部改动导致定位失败 | 报错并弹出该条（不再阻塞后续撤销） |
+| 撤销写盘失败 | 状态栏报错；该快照已弹栈不恢复（用户可重试编辑） |
 
 ## 5. 测试策略
 
 - `server/src/bridges.test.ts`：`wantsTextEditBridge` token 解析；`injectTextEditBridge` 注入位置/防重/无 `</body>` 兜底；与 snapshot 双注入共存。
-- `web/src/lib/textEdit.test.ts`：消息折算；三策略各自命中与 occurrence 选择；newText 实体编码；连续编辑（写后再改）；原子多 op；全败返回 null；`invertEdits`。
+- `web/src/lib/textEdit.test.ts`：消息折算；raw/实体/`&nbsp;`/非 ASCII 实体命中与 occurrence 选择；`htmlTextRegions`（属性值/注释/script/style/textarea 不计入，title 计入）；newText 实体编码；连续编辑（写后再改）；原子多 op 与同文案 occurrence 降序应用；定位失败返回 null。
 - bridge 脚本与 FileViewer 集成为手动验证（`pnpm dev`），与项目现状一致（组件无单测先例）。
 
 ## 6. 验收标准
