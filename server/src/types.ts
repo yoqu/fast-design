@@ -65,4 +65,6 @@ export type ProjectMeta = {
   skillId?: string | null;
   pendingPrompt?: string | null;
   metadata?: ProjectMetadata;
+  /** GET /api/projects 派生字段(由 session isBusy 计算),不持久化。 */
+  running?: boolean;
 };
