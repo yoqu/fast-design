@@ -129,3 +129,6 @@ export type ExtensionInfo = { source: string };
 export type ExtensionOpResult = { ok: boolean; output: string };
 
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+
+export type DetectedEditor = { id: string; name: string; installed: boolean };
+export type HandoffInfo = { dir: string; editors: DetectedEditor[] };

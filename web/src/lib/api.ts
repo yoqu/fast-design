@@ -1,4 +1,4 @@
-import type { ChatMessage, ConversationMeta, ConversationSummary, CustomModel, CustomProvider, ExtensionInfo, ExtensionOpResult, FileEntry, PiModel, PiSettings, PiStatus, ProjectMeta, ProvidersResponse, SkillInfo, UiEvent } from './types';
+import type { ChatMessage, ConversationMeta, ConversationSummary, CustomModel, CustomProvider, ExtensionInfo, ExtensionOpResult, FileEntry, HandoffInfo, PiModel, PiSettings, PiStatus, ProjectMeta, ProvidersResponse, SkillInfo, UiEvent } from './types';
 import type { PreviewUrlResponse, ProjectArtifact } from './artifacts';
 import type { CreateProjectRequest } from './newProject';
 
@@ -112,6 +112,16 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ from, to }),
+    }).then((r) => json<{ ok: boolean }>(r)),
+  handoffInfo: (id: string) =>
+    fetch(`/api/projects/${id}/handoff`).then((r) => json<HandoffInfo>(r)),
+  revealProject: (id: string) =>
+    fetch(`/api/projects/${id}/reveal`, { method: 'POST' }).then((r) => json<{ ok: boolean }>(r)),
+  openInEditor: (id: string, editor: string) =>
+    fetch(`/api/projects/${id}/open-in-editor`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editor }),
     }).then((r) => json<{ ok: boolean }>(r)),
 };
 

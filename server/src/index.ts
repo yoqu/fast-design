@@ -41,6 +41,7 @@ import { listArtifacts } from './artifacts.js';
 import { deleteProjectFile, readProjectFile, renameProjectFile, writeProjectFile } from './files.js';
 import { mintPreviewScope, previewScopeRe, validatePreviewScope } from './preview-scopes.js';
 import { injectSnapshotBridge, wantsSnapshotBridge } from './bridges.js';
+import { detectEditors, openInEditor, revealDir } from './handoff.js';
 import type { ChatMessage, ToolCall, UiEvent } from './types.js';
 
 const PORT = Number(process.env.PORT) || 4400;
@@ -491,6 +492,31 @@ app.get(/^\/api\/projects\/([^/]+)\/preview\/([^/]+)\/(.+)$/u, (req, res) => {
   res.sendFile(target, (err) => {
     if (err && !res.headersSent) res.status(404).send('not found');
   });
+});
+
+// ---- Handoff (editor detection / Finder / open in editor) ----
+
+app.get('/api/projects/:id/handoff', (req, res) => {
+  const meta = getProject(req.params.id);
+  if (!meta) return res.status(404).json({ error: 'project not found' });
+  res.json({ dir: projectDir(req.params.id), editors: detectEditors() });
+});
+
+app.post('/api/projects/:id/reveal', (req, res) => {
+  const meta = getProject(req.params.id);
+  if (!meta) return res.status(404).json({ error: 'project not found' });
+  revealDir(projectDir(req.params.id));
+  res.json({ ok: true });
+});
+
+app.post('/api/projects/:id/open-in-editor', (req, res) => {
+  const meta = getProject(req.params.id);
+  if (!meta) return res.status(404).json({ error: 'project not found' });
+  const editor = typeof req.body?.editor === 'string' ? req.body.editor : '';
+  if (!openInEditor(editor, projectDir(req.params.id))) {
+    return res.status(400).json({ error: 'unknown editor' });
+  }
+  res.json({ ok: true });
 });
 
 // ---- Export (ZIP download) ----
