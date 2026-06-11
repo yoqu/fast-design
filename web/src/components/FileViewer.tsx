@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectArtifact } from '../lib/artifacts';
 import { reduceTweaksMessage } from '../lib/tweaks';
+import { applyTextEdits, reduceTextEditMessage, type TextEditCommit } from '../lib/textEdit';
 import { api } from '../lib/api';
 import type { GenerationModel } from '../lib/generation';
 import { GenerationStage } from './GenerationStage';
@@ -75,6 +76,21 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
   // artifact 本地关闭（×/Esc）会发 __edit_mode_dismissed，开关回拨为关。
   const [tweaksAvailable, setTweaksAvailable] = useState(false);
   const [tweaksOn, setTweaksOn] = useState(false);
+  // 可视化文案编辑（设计 docs/superpowers/specs/2026-06-11-visual-text-edit-design.md）：
+  // 开关控制 iframe 内 bridge；提交经串行队列 readFile→applyTextEdits→putFile；
+  // 编辑期间冻结外部 reloadKey（保存自身触发的 SSE 重载会丢滚动位置），退出时
+  // 再同步；撤销用提交前整文件快照 + localReload 重载。
+  const isHtmlFile = /\.html?$/i.test(file);
+  const [textEditOn, setTextEditOn] = useState(false);
+  const [textEditStatus, setTextEditStatus] = useState<{
+    kind: 'idle' | 'saving' | 'saved' | 'error';
+    message?: string;
+  }>({ kind: 'idle' });
+  const [undoCount, setUndoCount] = useState(0);
+  const [frozenReloadKey, setFrozenReloadKey] = useState(reloadKey);
+  const textEditOnRef = useRef(false);
+  const undoStackRef = useRef<string[]>([]);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const zoomMenuRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -86,7 +102,7 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
       .previewUrl(projectId, file)
       .then((data) => {
         if (cancelled) return;
-        setPreviewUrl(`${data.url}?bridge=snapshot`);
+        setPreviewUrl(`${data.url}?bridge=${isHtmlFile ? 'snapshot,edit' : 'snapshot'}`);
         setSandbox(data.iframeSandbox);
       })
       .catch((err) => {
@@ -95,7 +111,30 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
     return () => {
       cancelled = true;
     };
-  }, [projectId, file, reloadKey, localReload]);
+  }, [projectId, file, frozenReloadKey, localReload, isHtmlFile]);
+
+  useEffect(() => {
+    textEditOnRef.current = textEditOn;
+  }, [textEditOn]);
+
+  // 编辑模式下不透传外部 reloadKey（保存自身会触发 SSE 重载），退出时同步。
+  useEffect(() => {
+    if (!textEditOn) setFrozenReloadKey(reloadKey);
+  }, [reloadKey, textEditOn]);
+
+  // 切文件/项目退出编辑态并清撤销栈（快照只对当前文件有效）。
+  useEffect(() => {
+    setTextEditOn(false);
+    setTextEditStatus({ kind: 'idle' });
+    undoStackRef.current = [];
+    setUndoCount(0);
+  }, [projectId, file]);
+
+  useEffect(() => {
+    if (textEditStatus.kind !== 'saved') return;
+    const timer = setTimeout(() => setTextEditStatus({ kind: 'idle' }), 2500);
+    return () => clearTimeout(timer);
+  }, [textEditStatus]);
 
   useEffect(() => {
     if (!zoomMenuOpen) return;
@@ -121,14 +160,77 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
   const refresh = useCallback(() => setLocalReload((v) => v + 1), []);
 
   // 预览文档更换（含刷新）后重置 Tweaks 可用性，等 artifact 重新上报。
+  // 注意依赖 frozenReloadKey 而非 reloadKey：文案编辑冻结期间 iframe 并未重载。
   useEffect(() => {
     setTweaksAvailable(false);
     setTweaksOn(false);
-  }, [previewUrl, reloadKey, localReload]);
+  }, [previewUrl, frozenReloadKey, localReload]);
+
+  const handleTextEditCommit = useCallback(
+    (frame: Window, commit: TextEditCommit) => {
+      saveQueueRef.current = saveQueueRef.current.then(async () => {
+        setTextEditStatus({ kind: 'saving' });
+        try {
+          const source = await api.readFile(projectId, file);
+          const next = applyTextEdits(source, commit.edits);
+          if (next === null) {
+            frame.postMessage({ type: 'pi:edit:result', id: commit.id, ok: false }, '*');
+            setTextEditStatus({ kind: 'error', message: '无法在源码中定位该文本（可能由脚本生成）' });
+            return;
+          }
+          await api.putFile(projectId, file, next);
+          undoStackRef.current.push(source);
+          if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+          setUndoCount(undoStackRef.current.length);
+          frame.postMessage({ type: 'pi:edit:result', id: commit.id, ok: true }, '*');
+          setTextEditStatus({ kind: 'saved' });
+        } catch (err) {
+          frame.postMessage({ type: 'pi:edit:result', id: commit.id, ok: false }, '*');
+          setTextEditStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        }
+      });
+    },
+    [projectId, file],
+  );
+
+  const undoTextEdit = useCallback(() => {
+    const snapshot = undoStackRef.current.pop();
+    if (snapshot === undefined) return;
+    setUndoCount(undoStackRef.current.length);
+    saveQueueRef.current = saveQueueRef.current.then(async () => {
+      setTextEditStatus({ kind: 'saving' });
+      try {
+        await api.putFile(projectId, file, snapshot);
+        setTextEditStatus({ kind: 'saved' });
+        setLocalReload((v) => v + 1);
+      } catch (err) {
+        setTextEditStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+      }
+    });
+  }, [projectId, file]);
+
+  const toggleTextEdit = useCallback(() => {
+    const frame = iframeRef.current?.contentWindow;
+    if (!frame) return;
+    setTextEditOn((prev) => {
+      const next = !prev;
+      frame.postMessage({ type: next ? 'pi:edit:activate' : 'pi:edit:deactivate' }, '*');
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
       if (!ev.data || ev.source !== iframeRef.current?.contentWindow) return;
+      const editAction = reduceTextEditMessage(ev.data);
+      if (editAction) {
+        // iframe（重新）加载后 bridge 就绪：编辑开关仍开则重新激活。
+        if (editAction.ready && textEditOnRef.current) {
+          (ev.source as Window).postMessage({ type: 'pi:edit:activate' }, '*');
+        }
+        if (editAction.commit) handleTextEditCommit(ev.source as Window, editAction.commit);
+        return;
+      }
       const action = reduceTweaksMessage(ev.data);
       if (!action) return;
       if (action.available !== undefined) setTweaksAvailable(action.available);
@@ -139,7 +241,7 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [handleTextEditCommit]);
 
   const toggleTweaks = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
@@ -181,7 +283,7 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
   // 交互；仅明确失败时显示错误舞台。首次生成（无 tab）的完整舞台由
   // Workspace 空态承担。
   const stageVisible = generation.phase === 'failed';
-  const iframeKey = `${previewUrl ?? ''}:${reloadKey}:${localReload}`;
+  const iframeKey = `${previewUrl ?? ''}:${frozenReloadKey}:${localReload}`;
 
   return (
     <div className="flex h-full flex-col">
@@ -246,6 +348,43 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
             }`}
           >
             Tweaks
+          </button>
+        ) : null}
+        {textEditStatus.kind !== 'idle' ? (
+          <span
+            className={`max-w-40 truncate text-xs ${
+              textEditStatus.kind === 'error' ? 'text-red-500' : 'text-zinc-400'
+            }`}
+            title={textEditStatus.message}
+          >
+            {textEditStatus.kind === 'saving'
+              ? '保存中…'
+              : textEditStatus.kind === 'saved'
+                ? '已保存'
+                : textEditStatus.message ?? '保存失败'}
+          </span>
+        ) : null}
+        {textEditOn && undoCount > 0 ? (
+          <button
+            type="button"
+            onClick={undoTextEdit}
+            title="撤销上一次文案修改"
+            className="rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+          >
+            撤销
+          </button>
+        ) : null}
+        {isHtmlFile ? (
+          <button
+            type="button"
+            onClick={toggleTextEdit}
+            title="可视化编辑文案"
+            aria-pressed={textEditOn}
+            className={`rounded-md px-2 py-1 text-xs ${
+              textEditOn ? 'bg-blue-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'
+            }`}
+          >
+            文案
           </button>
         ) : null}
         <button type="button" onClick={refresh} title="刷新预览" className="rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100">
