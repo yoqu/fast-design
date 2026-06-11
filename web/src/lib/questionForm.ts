@@ -17,6 +17,8 @@ export type FormQuestion = {
 
 export type QuestionForm = { id: string | null; title: string | null; questions: FormQuestion[] };
 
+// 不支持嵌套标签:惰性匹配遇到嵌套 <question-form> 会在第一个闭合标签截断,
+// 外层 JSON 解析失败被跳过,内层也不再独立匹配(模型输出不会嵌套,可接受)。
 const FORM_RE = /<(question-form|ask-question)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
 
 function attr(attrs: string, name: string): string | null {
