@@ -3,6 +3,7 @@ import type { ChangeEvent, DragEvent } from 'react';
 import type { ProjectArtifact } from '../lib/artifacts';
 import type { FileEntry } from '../lib/types';
 import { api } from '../lib/api';
+import { ArrowUpIcon, FolderIcon, PencilIcon } from './icons';
 
 // Semantic sections mirroring open-design DesignFilesPanel's SECTION_ORDER
 // (folders pinned first; empty sections are skipped).
@@ -176,7 +177,7 @@ export function FilesPanel({ projectId, files, artifacts, onOpenFile, onChanged 
           title="上一级"
           className="rounded-md px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100 disabled:opacity-30"
         >
-          ↑
+          <ArrowUpIcon size={13} />
         </button>
         <nav className="flex min-w-0 flex-1 items-center gap-1 text-xs text-zinc-500">
           <button type="button" onClick={() => setCurrentDir('')} className="hover:text-zinc-900">
@@ -225,7 +226,7 @@ export function FilesPanel({ projectId, files, artifacts, onOpenFile, onChanged 
                 onClick={() => setCurrentDir(currentDir ? `${currentDir}/${dir}` : dir)}
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
               >
-                <span aria-hidden>📁</span>
+                <FolderIcon size={15} className="shrink-0 text-zinc-400" />
                 <span className="truncate">{dir}</span>
               </button>
             ))}
@@ -283,7 +284,7 @@ export function FilesPanel({ projectId, files, artifacts, onOpenFile, onChanged 
                       onClick={() => setRenaming({ path: file.path, draft: name })}
                       className="rounded px-1 text-xs text-zinc-400 opacity-0 hover:bg-zinc-200 group-hover:opacity-100"
                     >
-                      ✎
+                      <PencilIcon size={12} />
                     </button>
                   ) : null}
                 </div>

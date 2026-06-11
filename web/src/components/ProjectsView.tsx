@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { filterProjects, sortProjects, type ProjectsSubTab } from '../lib/projectsList';
 import type { ProjectMeta } from '../lib/types';
 import ProjectCard from './ProjectCard';
+import { PlusIcon } from './icons';
 
 type Props = {
   projects: ProjectMeta[];
@@ -108,9 +109,10 @@ export default function ProjectsView({ projects, onOpen, onRename, onDelete, onN
                 <button
                   type="button"
                   onClick={onNewProject}
-                  className="mt-3 rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-700"
+                  className="mt-3 flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-700"
                 >
-                  ＋ 新建项目
+                  <PlusIcon size={14} />
+                  新建项目
                 </button>
               </>
             ) : (

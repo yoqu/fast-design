@@ -1,6 +1,7 @@
 // web/src/components/WorkingDirPill.tsx
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
+import { ChevronDownIcon, FolderIcon } from './icons';
 
 type Props = { projectId: string; dir: string | null };
 
@@ -32,9 +33,9 @@ export default function WorkingDirPill({ projectId, dir }: Props) {
         onClick={() => { setOpen((v) => !v); setError(null); }}
         className="flex max-w-48 items-center gap-1.5 rounded-full border border-zinc-200 px-2.5 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
       >
-        <span>📁</span>
+        <FolderIcon size={13} className="shrink-0" />
         <span className="truncate">{lastSegment}</span>
-        <span className="text-zinc-400">▾</span>
+        <ChevronDownIcon size={12} className="shrink-0 text-zinc-400" />
       </button>
       {open && (
         <div role="menu" className="absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-zinc-200 bg-white p-1 text-xs shadow-lg">

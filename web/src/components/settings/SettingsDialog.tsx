@@ -4,6 +4,7 @@ import InstructionsSection from './InstructionsSection';
 import SkillsSection from './SkillsSection';
 import ExtensionsSection from './ExtensionsSection';
 import AboutSection from './AboutSection';
+import { XIcon } from '../icons';
 
 type SectionId = 'providers' | 'instructions' | 'skills' | 'extensions' | 'about';
 
@@ -45,8 +46,9 @@ export default function SettingsDialog({ projectId, onClose }: Props) {
             onClick={onClose}
             className="absolute right-3 top-3 z-10 rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
             title="关闭"
+            aria-label="关闭"
           >
-            ✕
+            <XIcon size={15} />
           </button>
           <div className="h-full overflow-y-auto p-5">
             {active === 'providers' && <ProvidersSection />}

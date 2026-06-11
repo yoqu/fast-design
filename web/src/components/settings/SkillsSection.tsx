@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { piApi } from '../../lib/api';
 import type { SkillInfo } from '../../lib/types';
+import { PlusIcon } from '../icons';
 
 type Props = { projectId: string | null };
 
@@ -117,9 +118,10 @@ export default function SkillsSection({ projectId }: Props) {
     );
   }
 
-  const groups: Array<{ title: string; scope: 'global' | 'project' }> = [
-    { title: '全局技能（~/.pi/agent/skills）', scope: 'global' },
-    ...(projectId ? [{ title: '项目技能（.pi/skills）', scope: 'project' as const }] : []),
+  // 全局 ~/.pi/agent/skills（lark/上传等）不展示也不注入 agent，仅保留内置设计 + 项目级。
+  const groups: Array<{ title: string; scope: 'project' | 'bundled' }> = [
+    { title: '内置设计技能（随仓库 · 注入 agent）', scope: 'bundled' },
+    ...(projectId ? [{ title: '项目技能（.pi/skills · 注入 agent）', scope: 'project' as const }] : []),
   ];
 
   return (
@@ -127,7 +129,7 @@ export default function SkillsSection({ projectId }: Props) {
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-zinc-800">Skills</h3>
         {!creating && (
-          <button onClick={() => setCreating(true)} className="text-xs text-zinc-500 hover:text-zinc-800">＋ 新建技能</button>
+          <button onClick={() => setCreating(true)} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-800"><PlusIcon size={12} />新建技能</button>
         )}
       </div>
       {error && <p className="text-xs text-red-500">{error}</p>}
@@ -173,7 +175,9 @@ export default function SkillsSection({ projectId }: Props) {
           </section>
         );
       })}
-      <p className="text-xs text-zinc-400">启用/禁用写入 pi 的 settings.json，对新启动的会话生效。</p>
+      <p className="text-xs text-zinc-400">
+        新建技能落入内置设计库并注入 agent；全局 ~/.pi/agent/skills 不展示也不进 agent 上下文。开关对新启动的会话生效。
+      </p>
     </div>
   );
 }

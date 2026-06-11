@@ -12,6 +12,7 @@ import ProjectSettingsDialog from './ProjectSettingsDialog';
 import HandoffButton from './HandoffButton';
 import QuestionsPanel from './QuestionsPanel';
 import WorkingDirPill from './WorkingDirPill';
+import { LayoutGridIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, SettingsIcon, XIcon } from './icons';
 
 type Props = {
   projectId: string;
@@ -189,7 +190,7 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
           onClick={() => onFocusModeChange(!focusMode)}
           className="rounded-md px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
         >
-          {focusMode ? '⟩' : '⟨'}
+          {focusMode ? <PanelLeftOpenIcon size={15} /> : <PanelLeftCloseIcon size={15} />}
         </button>
         <WorkingDirPill projectId={projectId} dir={handoff?.dir ?? null} />
         <div className="flex-1" />
@@ -227,7 +228,7 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
                   onClick={() => closeTab(tab)}
                   className="rounded px-0.5 text-zinc-400 opacity-0 hover:bg-zinc-200 hover:text-zinc-700 group-hover:opacity-100"
                 >
-                  ×
+                  <XIcon size={12} />
                 </button>
               </div>
             );
@@ -263,7 +264,7 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
             title="项目设置"
             className="mb-1 shrink-0 rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
           >
-            ⚙
+            <SettingsIcon size={15} />
           </button>
         )}
       </div>
@@ -294,7 +295,7 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
               <GenerationStage model={generation} onRetry={onRetry} />
             ) : (
               <>
-                <span className="text-4xl">▦</span>
+                <LayoutGridIcon size={40} className="text-zinc-300" />
                 <p className="mt-3 text-sm">在左侧对话生成原型,完成后会自动在这里打开预览</p>
               </>
             )}

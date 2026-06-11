@@ -1,4 +1,5 @@
 import type { GenerationModel, GenerationStepId } from '../lib/generation';
+import { CheckIcon, SparklesIcon, SquareIcon, XIcon } from './icons';
 
 type Props = {
   model: GenerationModel;
@@ -34,7 +35,7 @@ export function GenerationStage({ model, onRetry }: Props) {
         ? '本次生成已停止,可以继续对话或重试。'
         : model.activityLabel;
 
-  const markIcon = model.phase === 'failed' ? '✕' : model.phase === 'stopped' ? '◼' : '✦';
+  const MarkIcon = model.phase === 'failed' ? XIcon : model.phase === 'stopped' ? SquareIcon : SparklesIcon;
   const showSubstatus = generating && Boolean(model.detailLabel);
 
   return (
@@ -53,7 +54,7 @@ export function GenerationStage({ model, onRetry }: Props) {
             : 'bg-zinc-900 text-white' + (generating ? ' animate-pulse' : '')
         }`}
       >
-        {markIcon}
+        <MarkIcon size={22} />
       </div>
       <h1 className="text-lg font-semibold text-zinc-900">{title}</h1>
       {!showSubstatus && lead ? (
@@ -66,9 +67,9 @@ export function GenerationStage({ model, onRetry }: Props) {
             <li key={step.id} data-status={step.status} className="flex items-center gap-2 text-sm">
               <span aria-hidden className="flex h-4 w-4 items-center justify-center">
                 {step.status === 'succeeded' ? (
-                  <span className="text-emerald-600">✓</span>
+                  <CheckIcon size={13} className="text-emerald-600" />
                 ) : step.status === 'failed' ? (
-                  <span className="text-red-500">✕</span>
+                  <XIcon size={13} className="text-red-500" />
                 ) : (
                   <span
                     className={`h-2 w-2 rounded-full bg-zinc-800 ${step.status === 'running' && generating ? 'animate-pulse' : ''}`}

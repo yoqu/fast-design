@@ -12,6 +12,7 @@ import ProjectsView from './ProjectsView';
 import NewProjectPanel from './NewProjectPanel';
 import SettingsDialog from './settings/SettingsDialog';
 import { tabStorageKey } from './Workspace';
+import { MenuIcon, PlusIcon } from './icons';
 
 type Props = { view: EntryHomeView };
 
@@ -119,7 +120,7 @@ export default function EntryShell({ view }: Props) {
               onClick={() => setRailOpen(true)}
               className="rounded-md px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100"
             >
-              ☰
+              <MenuIcon size={16} />
             </button>
           )}
           <span className="text-sm font-semibold text-zinc-800">{view === 'home' ? 'Home' : 'Projects'}</span>
@@ -127,9 +128,10 @@ export default function EntryShell({ view }: Props) {
           <button
             type="button"
             onClick={() => setShowNewProject(true)}
-            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs text-white hover:bg-zinc-700"
+            className="flex items-center gap-1.5 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs text-white hover:bg-zinc-700"
           >
-            ＋ 新建项目
+            <PlusIcon size={13} />
+            新建项目
           </button>
         </header>
         {error && <p className="px-6 pt-2 text-xs text-red-500">{error}</p>}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { relativeTime } from '../lib/relativeTime';
 import type { ProjectMeta } from '../lib/types';
+import { CheckIcon, EllipsisIcon } from './icons';
 
 type Props = {
   project: ProjectMeta;
@@ -84,7 +85,7 @@ export default function ProjectCard({ project, onOpen, onRename, onDelete, selec
               selected ? 'border-zinc-900 bg-zinc-900 text-white' : 'border-zinc-300 bg-white text-transparent'
             }`}
           >
-            ✓
+            {selected ? <CheckIcon size={12} /> : null}
           </span>
         )}
       </div>
@@ -139,7 +140,7 @@ export default function ProjectCard({ project, onOpen, onRename, onDelete, selec
                 setMenuOpen((v) => !v);
               }}
             >
-              ⋯
+              <EllipsisIcon size={14} />
             </button>
             {menuOpen && (
               <div

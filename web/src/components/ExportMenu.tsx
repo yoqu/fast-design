@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import type { ProjectArtifact } from '../lib/artifacts';
 import { api } from '../lib/api';
+import { DownloadIcon } from './icons';
 import {
   exportAsHtml,
   exportAsPdf,
@@ -75,10 +76,11 @@ export function ExportMenu({ projectId, file, artifact, files, iframeRef }: Prop
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
         aria-expanded={open}
       >
-        ⬇ 导出
+        <DownloadIcon size={13} />
+        导出
       </button>
       {open ? (
         <div className="absolute right-0 top-full z-20 mt-1 w-56 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg">

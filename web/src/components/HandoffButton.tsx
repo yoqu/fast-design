@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import type { DetectedEditor } from '../lib/types';
+import { ChevronDownIcon } from './icons';
 
 type Props = { projectId: string; dir: string | null; editors: DetectedEditor[] };
 
@@ -87,7 +88,7 @@ export default function HandoffButton({ projectId, dir, editors }: Props) {
           onClick={() => setOpen((v) => !v)}
           className="border-l border-zinc-200 px-1.5 text-xs text-zinc-500 hover:bg-zinc-50"
         >
-          ▾
+          <ChevronDownIcon size={12} />
         </button>
       </div>
       {open && (

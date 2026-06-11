@@ -16,6 +16,7 @@ import { navigate } from '../router';
 import type { ConversationSummary, ProjectMeta } from '../lib/types';
 import ChatPanel from './ChatPanel';
 import { Workspace } from './Workspace';
+import { ArrowLeftIcon } from './icons';
 
 type Props = {
   projectId: string;
@@ -277,8 +278,9 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
     return (
       <div className="flex h-full flex-col items-center justify-center text-zinc-400">
         <p className="text-sm text-red-500">{error}</p>
-        <button type="button" onClick={onBack} className="mt-3 rounded-lg px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100">
-          ← 返回项目列表
+        <button type="button" onClick={onBack} className="mt-3 flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100">
+          <ArrowLeftIcon size={13} />
+          返回项目列表
         </button>
       </div>
     );

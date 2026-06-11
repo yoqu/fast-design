@@ -1,5 +1,7 @@
 // web/src/components/EntryNavRail.tsx
 import type { EntryHomeView } from '../router';
+import { HouseIcon, LayoutGridIcon, PanelLeftCloseIcon, PlusIcon, SettingsIcon, type IconProps } from './icons';
+import type { ReactElement } from 'react';
 
 type Props = {
   open: boolean;
@@ -10,9 +12,9 @@ type Props = {
   onOpenSettings: () => void;
 };
 
-const NAV_ITEMS: Array<{ view: EntryHomeView; label: string; icon: string }> = [
-  { view: 'home', label: 'Home', icon: '⌂' },
-  { view: 'projects', label: 'Projects', icon: '▦' },
+const NAV_ITEMS: Array<{ view: EntryHomeView; label: string; icon: (props: IconProps) => ReactElement }> = [
+  { view: 'home', label: 'Home', icon: HouseIcon },
+  { view: 'projects', label: 'Projects', icon: LayoutGridIcon },
 ];
 
 /**
@@ -37,16 +39,17 @@ export default function EntryNavRail({ open, view, onClose, onNavigate, onNewPro
           onClick={onClose}
           className="rounded-md px-1.5 py-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
         >
-          ⟨
+          <PanelLeftCloseIcon size={15} />
         </button>
       </div>
       <div className="px-2">
         <button
           type="button"
           onClick={onNewProject}
-          className="w-full rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-sm text-zinc-500 hover:border-zinc-400 hover:text-zinc-700"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-sm text-zinc-500 hover:border-zinc-400 hover:text-zinc-700"
         >
-          ＋ 新建项目
+          <PlusIcon size={14} />
+          新建项目
         </button>
       </div>
       <nav className="mt-2 flex-1 space-y-0.5 px-2">
@@ -59,7 +62,7 @@ export default function EntryNavRail({ open, view, onClose, onNavigate, onNewPro
               view === item.view ? 'bg-zinc-200/80 text-zinc-900' : 'text-zinc-600 hover:bg-zinc-100'
             }`}
           >
-            <span>{item.icon}</span>
+            <item.icon size={15} className="text-zinc-500" />
             {item.label}
           </button>
         ))}
@@ -70,7 +73,8 @@ export default function EntryNavRail({ open, view, onClose, onNavigate, onNewPro
           onClick={onOpenSettings}
           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
         >
-          ⚙ 设置
+          <SettingsIcon size={15} />
+          设置
         </button>
       </div>
     </aside>

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { sortProjects } from '../lib/projectsList';
 import type { ProjectMeta } from '../lib/types';
 import ProjectCard from './ProjectCard';
+import { ArrowRightIcon } from './icons';
 
 type Props = {
   projects: ProjectMeta[];
@@ -79,8 +80,9 @@ export default function HomeView({ projects, onOpen, onRename, onDelete, onCreat
           <div className="mt-12">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium text-zinc-700">最近项目</h2>
-              <button type="button" onClick={onViewAll} className="text-xs text-zinc-500 hover:text-zinc-800">
-                查看全部 →
+              <button type="button" onClick={onViewAll} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-800">
+                查看全部
+                <ArrowRightIcon size={12} />
               </button>
             </div>
             <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">

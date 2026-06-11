@@ -1,7 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import type { ProjectArtifact } from '../lib/artifacts';
 import { reduceTweaksMessage } from '../lib/tweaks';
 import { applyTextEdits, reduceTextEditMessage, type TextEditCommit } from '../lib/textEdit';
+import {
+  ExternalLinkIcon,
+  MonitorIcon,
+  PencilLineIcon,
+  RefreshIcon,
+  SmartphoneIcon,
+  TabletIcon,
+  UndoIcon,
+  type IconProps,
+} from './icons';
 import { api } from '../lib/api';
 import type { GenerationModel } from '../lib/generation';
 import { GenerationStage } from './GenerationStage';
@@ -16,13 +26,13 @@ type PreviewViewportPreset = {
   height: number | null;
   label: string;
   title: string;
-  icon: string;
+  icon: (props: IconProps) => ReactElement;
 };
 
 const PREVIEW_VIEWPORT_PRESETS: PreviewViewportPreset[] = [
-  { id: 'desktop', width: null, height: null, label: '桌面', title: '桌面(满幅)', icon: '🖥' },
-  { id: 'tablet', width: 820, height: 1180, label: '平板', title: '平板 820×1180', icon: '📱' },
-  { id: 'mobile', width: 390, height: 844, label: '手机', title: '手机 390×844', icon: '📲' },
+  { id: 'desktop', width: null, height: null, label: '桌面', title: '桌面(满幅)', icon: MonitorIcon },
+  { id: 'tablet', width: 820, height: 1180, label: '平板', title: '平板 820×1180', icon: TabletIcon },
+  { id: 'mobile', width: 390, height: 844, label: '手机', title: '手机 390×844', icon: SmartphoneIcon },
 ];
 
 const ZOOM_LEVELS = [50, 75, 100, 125, 150, 200];
@@ -294,12 +304,13 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
               key={p.id}
               type="button"
               title={p.title}
+              aria-label={p.label}
               onClick={() => setViewport(p.id)}
-              className={`rounded-md px-2 py-0.5 text-xs ${
+              className={`rounded-md px-2 py-1 ${
                 viewport === p.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
               }`}
             >
-              {p.label}
+              <p.icon size={14} />
             </button>
           ))}
         </div>
@@ -369,9 +380,10 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
             type="button"
             onClick={undoTextEdit}
             title="撤销上一次文案修改"
-            className="rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+            className="rounded-md px-2 py-1 text-zinc-600 hover:bg-zinc-100"
+            aria-label="撤销"
           >
-            撤销
+            <UndoIcon size={14} />
           </button>
         ) : null}
         {isHtmlFile ? (
@@ -379,19 +391,32 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
             type="button"
             onClick={toggleTextEdit}
             title="可视化编辑文案"
+            aria-label="可视化编辑文案"
             aria-pressed={textEditOn}
-            className={`rounded-md px-2 py-1 text-xs ${
+            className={`rounded-md px-2 py-1 ${
               textEditOn ? 'bg-blue-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'
             }`}
           >
-            文案
+            <PencilLineIcon size={14} />
           </button>
         ) : null}
-        <button type="button" onClick={refresh} title="刷新预览" className="rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100">
-          ⟳
+        <button
+          type="button"
+          onClick={refresh}
+          title="刷新预览"
+          aria-label="刷新预览"
+          className="rounded-md px-2 py-1 text-zinc-600 hover:bg-zinc-100"
+        >
+          <RefreshIcon size={14} />
         </button>
-        <button type="button" onClick={openInNewWindow} title="新窗口打开" className="rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100">
-          ↗
+        <button
+          type="button"
+          onClick={openInNewWindow}
+          title="新窗口打开"
+          aria-label="新窗口打开"
+          className="rounded-md px-2 py-1 text-zinc-600 hover:bg-zinc-100"
+        >
+          <ExternalLinkIcon size={14} />
         </button>
         <ExportMenu projectId={projectId} file={file} artifact={artifact} files={files} iframeRef={iframeRef} />
       </div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ConversationSummary } from '../lib/types';
+import { PlusIcon, XIcon } from './icons';
 
 type Props = {
   conversations: ConversationSummary[];
@@ -65,9 +66,10 @@ export default function ConversationsMenu({ conversations, activeId, onSelect, o
                 setOpen(false);
                 onCreate();
               }}
-              className="rounded-md px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-100"
+              className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-100"
             >
-              ＋ 新建
+              <PlusIcon size={12} />
+              新建
             </button>
           </div>
           {conversations.length === 0 && <p className="px-2 py-3 text-center text-xs text-zinc-400">还没有对话</p>}
@@ -130,7 +132,7 @@ export default function ConversationsMenu({ conversations, activeId, onSelect, o
                   }
                 }}
               >
-                ✕
+                <XIcon size={12} />
               </button>
             </div>
           ))}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { piApi } from '../../lib/api';
+import { PlusIcon, XIcon } from '../icons';
 import {
   THINKING_LEVELS,
   type CustomModel,
@@ -240,7 +241,7 @@ export default function ProvidersSection() {
         <div className="mb-2 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-zinc-800">自定义 Provider（Ollama / vLLM / 代理）</h3>
           {!draft && (
-            <button onClick={() => setDraft(EMPTY_DRAFT)} className="text-xs text-zinc-500 hover:text-zinc-800">＋ 新增</button>
+            <button onClick={() => setDraft(EMPTY_DRAFT)} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-800"><PlusIcon size={12} />新增</button>
           )}
         </div>
         {providers.custom.length > 0 && (
@@ -280,11 +281,11 @@ export default function ProvidersSection() {
                   <input className={`${input} w-36`} type="number" placeholder="上下文窗口（可选）" value={m.contextWindow ?? ''}
                     onChange={(e) => setDraft({ ...draft, models: draft.models.map((x, j) => (j === i ? { ...x, contextWindow: e.target.value ? Number(e.target.value) : undefined } : x)) })} />
                   <button onClick={() => setDraft({ ...draft, models: draft.models.filter((_, j) => j !== i) })}
-                    className="text-xs text-zinc-400 hover:text-red-500">✕</button>
+                    className="text-zinc-400 hover:text-red-500"><XIcon size={13} /></button>
                 </div>
               ))}
               <button onClick={() => setDraft({ ...draft, models: [...draft.models, { id: '' }] })}
-                className="text-xs text-zinc-500 hover:text-zinc-800">＋ 添加模型</button>
+                className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-800"><PlusIcon size={12} />添加模型</button>
             </div>
             <div className="flex gap-2">
               <button onClick={() => void saveDraft()} className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-700">保存</button>

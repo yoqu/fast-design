@@ -6,6 +6,7 @@ import { deriveGenerationModel, type GenerationInput, type GenerationModel } fro
 import Composer from './Composer';
 import MessageView from './MessageView';
 import ConversationsMenu from './ConversationsMenu';
+import { ArrowLeftIcon } from './icons';
 
 type Props = {
   projectId: string;
@@ -261,7 +262,7 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
           onClick={onBack}
           className="rounded-md px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
         >
-          ←
+          <ArrowLeftIcon size={15} />
         </button>
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800" title={projectName}>
           {projectName}

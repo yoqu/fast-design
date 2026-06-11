@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { ChatMessage, ToolCall } from '../lib/types';
+import { BrainIcon, ChevronDownIcon, ChevronRightIcon, CircleCheckIcon, CircleXIcon, LoaderIcon, TriangleAlertIcon } from './icons';
 
 function ToolCallCard({ tool }: { tool: ToolCall }) {
   const [open, setOpen] = useState(false);
@@ -20,10 +21,18 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
         className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
         onClick={() => setOpen(!open)}
       >
-        <span>{pending ? '⏳' : tool.isError ? '❌' : '✅'}</span>
+        <span className="flex items-center">
+          {pending ? (
+            <LoaderIcon size={13} className="animate-spin text-zinc-400" />
+          ) : tool.isError ? (
+            <CircleXIcon size={13} className="text-red-500" />
+          ) : (
+            <CircleCheckIcon size={13} className="text-emerald-600" />
+          )}
+        </span>
         <span className="font-mono font-medium text-zinc-700">{tool.name ?? 'tool'}</span>
         <span className="truncate font-mono text-zinc-400">{summary}</span>
-        <span className="ml-auto text-zinc-400">{open ? '▾' : '▸'}</span>
+        <span className="ml-auto text-zinc-400">{open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}</span>
       </button>
       {open && (
         <div className="border-t border-zinc-200 px-2.5 py-1.5">
@@ -50,10 +59,12 @@ function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean 
   return (
     <div className="my-1">
       <button
-        className="text-xs text-zinc-400 hover:text-zinc-600"
+        className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-600"
         onClick={() => setOpen(!open)}
       >
-        {streaming && !open ? '💭 思考中…' : `💭 思考过程 ${open ? '▾' : '▸'}`}
+        <BrainIcon size={12} />
+        {streaming && !open ? '思考中…' : '思考过程'}
+        {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
       </button>
       {open && (
         <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-zinc-50 p-2 text-xs text-zinc-500">
@@ -88,7 +99,10 @@ export default function MessageView({ message }: { message: ChatMessage }) {
         <p className="animate-pulse text-zinc-400">思考中…</p>
       )}
       {message.error && (
-        <p className="mt-1 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">⚠ {message.error}</p>
+        <p className="mt-1 flex items-start gap-1.5 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+          <TriangleAlertIcon size={13} className="mt-0.5 shrink-0" />
+          {message.error}
+        </p>
       )}
     </div>
   );
