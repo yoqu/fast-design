@@ -24,6 +24,10 @@ describe('sortProjects', () => {
   it('created 按 createdAt 降序', () => {
     expect(sortProjects(list, 'created').map((x) => x.id)).toEqual(['b', 'c', 'a']);
   });
+  it('相同 updatedAt 保持原始顺序(稳定排序)', () => {
+    const same = [p('x', 'X', 100, 500), p('y', 'Y', 200, 500)];
+    expect(sortProjects(same, 'recent').map((x) => x.id)).toEqual(['x', 'y']);
+  });
   it('不改原数组', () => {
     const copy = [...list];
     sortProjects(list, 'recent');
