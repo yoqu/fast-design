@@ -1,5 +1,5 @@
 // web/src/components/EntryShell.tsx
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { buildCreateRequest } from '../lib/newProject';
 import type { CreateProjectRequest } from '../lib/newProject';
@@ -23,11 +23,23 @@ export default function EntryShell({ view }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
 
+  // 组件卸载(如请求飞行中跳转详情页)后丢弃结果,避免 no-op setState。
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
-      setProjects(await api.listProjects());
+      const list = await api.listProjects();
+      if (!mountedRef.current) return;
+      setProjects(list);
       setError(null);
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : '无法连接服务端');
     }
   }, []);
