@@ -19,6 +19,7 @@ export default function ConversationsMenu({ conversations, activeId, onSelect, o
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const clickGuardRef = useRef<'dbl' | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -33,8 +34,10 @@ export default function ConversationsMenu({ conversations, activeId, onSelect, o
   const current = conversations.find((c) => c.id === activeId);
 
   const commitRename = (cid: string) => {
+    if (editingId !== cid) return; // unmount 后的 blur 双发防护
     setEditingId(null);
     const title = draft.trim();
+    setDraft('');
     if (title) onRename(cid, title);
   };
 
@@ -43,6 +46,7 @@ export default function ConversationsMenu({ conversations, activeId, onSelect, o
       <button
         type="button"
         aria-expanded={open}
+        aria-haspopup="menu"
         onClick={() => setOpen((v) => !v)}
         className={`flex max-w-56 items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${
           open ? 'border-zinc-400 bg-zinc-100' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
@@ -66,7 +70,7 @@ export default function ConversationsMenu({ conversations, activeId, onSelect, o
               ＋ 新建
             </button>
           </div>
-          {sorted.length === 0 && <p className="px-2 py-3 text-center text-xs text-zinc-400">还没有对话</p>}
+          {conversations.length === 0 && <p className="px-2 py-3 text-center text-xs text-zinc-400">还没有对话</p>}
           {sorted.map((c) => (
             <div
               key={c.id}
@@ -91,12 +95,22 @@ export default function ConversationsMenu({ conversations, activeId, onSelect, o
                   type="button"
                   role="menuitem"
                   className="min-w-0 flex-1 truncate text-left"
-                  onClick={() => {
-                    setOpen(false);
-                    if (c.id !== activeId) onSelect(c.id);
+                  onClick={(e) => {
+                    if (e.detail !== 1) return; // 双击的第二次 click 交给 onDoubleClick
+                    // 延迟到双击窗口结束再执行选择,避免卸载菜单使 dblclick 失效。
+                    const cid = c.id;
+                    window.setTimeout(() => {
+                      if (clickGuardRef.current === 'dbl') {
+                        clickGuardRef.current = null;
+                        return;
+                      }
+                      setOpen(false);
+                      if (cid !== activeId) onSelect(cid);
+                    }, 250);
                   }}
                   onDoubleClick={(e) => {
                     e.preventDefault();
+                    clickGuardRef.current = 'dbl';
                     setDraft(c.title ?? '');
                     setEditingId(c.id);
                   }}
