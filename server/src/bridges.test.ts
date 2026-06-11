@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { injectSnapshotBridge, wantsSnapshotBridge } from './bridges.js';
+import {
+  injectSnapshotBridge,
+  injectTextEditBridge,
+  wantsSnapshotBridge,
+  wantsTextEditBridge,
+} from './bridges.js';
 
 describe('wantsSnapshotBridge', () => {
   it('accepts snapshot/image/capture tokens in comma or space separated lists', () => {
@@ -30,5 +35,31 @@ describe('injectSnapshotBridge', () => {
     const once = injectSnapshotBridge('<body></body>');
     const twice = injectSnapshotBridge(once);
     expect(twice).toBe(once);
+  });
+});
+
+describe('wantsTextEditBridge', () => {
+  it('accepts edit/text-edit/text tokens in comma or space separated lists', () => {
+    expect(wantsTextEditBridge('edit')).toBe(true);
+    expect(wantsTextEditBridge('text-edit')).toBe(true);
+    expect(wantsTextEditBridge('snapshot,edit')).toBe(true);
+    expect(wantsTextEditBridge(['snapshot', 'text'])).toBe(true);
+    expect(wantsTextEditBridge('snapshot')).toBe(false);
+    expect(wantsTextEditBridge(undefined)).toBe(false);
+  });
+});
+
+describe('injectTextEditBridge', () => {
+  it('injects before </body> when present', () => {
+    const out = injectTextEditBridge('<html><body><h1>hi</h1></body></html>');
+    expect(out).toContain('data-pi-text-edit-bridge');
+    expect(out.indexOf('data-pi-text-edit-bridge')).toBeLessThan(out.indexOf('</body>'));
+  });
+
+  it('is idempotent and coexists with the snapshot bridge', () => {
+    const once = injectTextEditBridge(injectSnapshotBridge('<body></body>'));
+    expect(injectTextEditBridge(once)).toBe(once);
+    expect(once).toContain('data-od-url-snapshot-bridge');
+    expect(once).toContain('data-pi-text-edit-bridge');
   });
 });

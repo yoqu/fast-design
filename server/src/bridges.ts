@@ -205,3 +205,226 @@ function injectBeforeBodyClose(html: string, marker: string, injection: string):
 export function injectSnapshotBridge(html: string): string {
   return injectBeforeBodyClose(html, 'data-od-url-snapshot-bridge', URL_PREVIEW_SNAPSHOT_BRIDGE);
 }
+
+// 文案编辑 bridge（本项目自研，协议见
+// docs/superpowers/specs/2026-06-11-visual-text-edit-design.md）：
+// 宿主 postMessage pi:edit:activate/deactivate 控制；点选含直接文本的元素
+// 进入 plaintext-only 就地编辑；提交时上报各文本节点的
+// {oldText,newText,occurrence}，occurrence 为文档顺序中同值文本节点的序号；
+// 宿主回 pi:edit:result {id,ok}，失败则还原 DOM。
+const URL_PREVIEW_TEXT_EDIT_BRIDGE = `<script data-pi-text-edit-bridge>
+(function(){
+  if (window.__piTextEditBridge) return;
+  window.__piTextEditBridge = true;
+  var active = false;
+  var hoverEl = null;
+  var session = null;
+  var pending = {};
+  var seq = 0;
+  function isSkippable(el){
+    var tag = el && el.tagName ? el.tagName.toLowerCase() : '';
+    return tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'textarea';
+  }
+  function hasText(value){ return /\\S/.test(value || ''); }
+  function hasDirectText(el){
+    for (var n = el.firstChild; n; n = n.nextSibling){
+      if (n.nodeType === 3 && hasText(n.nodeValue)) return true;
+    }
+    return false;
+  }
+  function editableFrom(target){
+    var el = target && target.nodeType === 3 ? target.parentElement : target;
+    while (el && el.nodeType === 1){
+      if (isSkippable(el)) return null;
+      if (hasDirectText(el)) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+  function walkTextNodes(fn){
+    var walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT, null);
+    var n;
+    while ((n = walker.nextNode())){
+      var p = n.parentElement;
+      if (!p || isSkippable(p)) continue;
+      if (!hasText(n.nodeValue)) continue;
+      fn(n);
+    }
+  }
+  function snapshotRecords(el){
+    var targets = [];
+    var tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+    var t;
+    while ((t = tw.nextNode())){
+      var p = t.parentElement;
+      if (!p || isSkippable(p)) continue;
+      if (!hasText(t.nodeValue)) continue;
+      targets.push(t);
+    }
+    var records = [];
+    var counts = Object.create(null);
+    walkTextNodes(function(n){
+      var key = n.nodeValue;
+      var idx = counts[key] || 0;
+      counts[key] = idx + 1;
+      if (targets.indexOf(n) !== -1) records.push({ node: n, value: n.nodeValue, occurrence: idx });
+    });
+    return records;
+  }
+  function ensureStyle(){
+    if (document.querySelector('style[data-pi-text-edit-style]')) return;
+    var st = document.createElement('style');
+    st.setAttribute('data-pi-text-edit-style', '');
+    st.textContent = '[data-pi-edit-hover]{outline:2px dashed #3b82f6 !important;outline-offset:2px;cursor:text}' +
+      '[data-pi-edit-active]{outline:2px solid #2563eb !important;outline-offset:2px}';
+    (document.head || document.documentElement).appendChild(st);
+  }
+  function clearHover(){
+    if (hoverEl){ hoverEl.removeAttribute('data-pi-edit-hover'); hoverEl = null; }
+  }
+  function restoreRecords(records){
+    for (var i = 0; i < records.length; i++){
+      try { records[i].node.nodeValue = records[i].value; } catch (_) {}
+    }
+  }
+  function finishEdit(commit){
+    if (!session) return;
+    var s = session;
+    session = null;
+    s.el.removeEventListener('keydown', onKeydown);
+    s.el.removeEventListener('blur', onBlur);
+    if (s.prevEditable === null) s.el.removeAttribute('contenteditable');
+    else s.el.setAttribute('contenteditable', s.prevEditable);
+    if (s.prevSpellcheck === null) s.el.removeAttribute('spellcheck');
+    else s.el.setAttribute('spellcheck', s.prevSpellcheck);
+    s.el.removeAttribute('data-pi-edit-active');
+    if (!commit){
+      restoreRecords(s.records);
+      return;
+    }
+    var edits = [];
+    for (var i = 0; i < s.records.length; i++){
+      var r = s.records[i];
+      var current = r.node.parentNode ? r.node.nodeValue : '';
+      if (current !== r.value) edits.push({ oldText: r.value, newText: current, occurrence: r.occurrence });
+    }
+    if (!edits.length) return;
+    var id = 'pi-edit-' + (++seq);
+    pending[id] = s.records;
+    window.parent.postMessage({ type: 'pi:edit:commit', id: id, edits: edits }, '*');
+  }
+  function onKeydown(ev){
+    if (!session) return;
+    if (ev.key === 'Enter' && !ev.shiftKey){
+      ev.preventDefault();
+      var el = session.el;
+      finishEdit(true);
+      try { el.blur(); } catch (_) {}
+    } else if (ev.key === 'Escape'){
+      ev.preventDefault();
+      var el2 = session.el;
+      finishEdit(false);
+      try { el2.blur(); } catch (_) {}
+    }
+  }
+  function onBlur(){ finishEdit(true); }
+  function beginEdit(el, ev){
+    var records = snapshotRecords(el);
+    if (!records.length) return;
+    clearHover();
+    session = {
+      el: el,
+      records: records,
+      prevEditable: el.getAttribute('contenteditable'),
+      prevSpellcheck: el.getAttribute('spellcheck')
+    };
+    el.setAttribute('data-pi-edit-active', '');
+    try { el.setAttribute('contenteditable', 'plaintext-only'); } catch (_) {}
+    if (!el.isContentEditable) el.setAttribute('contenteditable', 'true');
+    el.setAttribute('spellcheck', 'false');
+    el.addEventListener('keydown', onKeydown);
+    el.addEventListener('blur', onBlur);
+    el.focus();
+    try {
+      var range = null;
+      if (document.caretRangeFromPoint) range = document.caretRangeFromPoint(ev.clientX, ev.clientY);
+      else if (document.caretPositionFromPoint){
+        var pos = document.caretPositionFromPoint(ev.clientX, ev.clientY);
+        if (pos){
+          range = document.createRange();
+          range.setStart(pos.offsetNode, pos.offset);
+          range.collapse(true);
+        }
+      }
+      if (range){
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } catch (_) {}
+  }
+  function onOver(ev){
+    var el = editableFrom(ev.target);
+    if (hoverEl === el) return;
+    clearHover();
+    if (el && (!session || session.el !== el)){
+      el.setAttribute('data-pi-edit-hover', '');
+      hoverEl = el;
+    }
+  }
+  function onOut(){ clearHover(); }
+  function onClick(ev){
+    if (session && session.el.contains(ev.target)) return;
+    var el = editableFrom(ev.target);
+    if (!el){
+      if (session) finishEdit(true);
+      return;
+    }
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (session) finishEdit(true);
+    beginEdit(el, ev);
+  }
+  function activate(){
+    if (active) return;
+    active = true;
+    ensureStyle();
+    document.addEventListener('mouseover', onOver, true);
+    document.addEventListener('mouseout', onOut, true);
+    document.addEventListener('click', onClick, true);
+    window.parent.postMessage({ type: 'pi:edit:state', active: true }, '*');
+  }
+  function deactivate(){
+    if (!active) return;
+    active = false;
+    finishEdit(true);
+    clearHover();
+    document.removeEventListener('mouseover', onOver, true);
+    document.removeEventListener('mouseout', onOut, true);
+    document.removeEventListener('click', onClick, true);
+    window.parent.postMessage({ type: 'pi:edit:state', active: false }, '*');
+  }
+  window.addEventListener('message', function(ev){
+    var data = ev && ev.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'pi:edit:activate') activate();
+    else if (data.type === 'pi:edit:deactivate') deactivate();
+    else if (data.type === 'pi:edit:result' && data.id){
+      var records = pending[data.id];
+      delete pending[data.id];
+      if (records && data.ok !== true) restoreRecords(records);
+    }
+  });
+  window.parent.postMessage({ type: 'pi:edit:ready' }, '*');
+})();
+</script>`;
+
+export function wantsTextEditBridge(value: unknown): boolean {
+  return previewBridgeTokens(value).some(
+    (token) => token === 'edit' || token === 'text-edit' || token === 'text',
+  );
+}
+
+export function injectTextEditBridge(html: string): string {
+  return injectBeforeBodyClose(html, 'data-pi-text-edit-bridge', URL_PREVIEW_TEXT_EDIT_BRIDGE);
+}

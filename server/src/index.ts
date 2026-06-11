@@ -33,6 +33,7 @@ import {
 } from './conversations.js';
 import { importClaudeDesignZip } from './claude-design-import.js';
 import { parseCreateProjectBody } from './project-create.js';
+import { enabledSkillPaths } from './pi-skills.js';
 import { runningProjectIds } from './running.js';
 import { registerPiRoutes } from './pi-routes.js';
 import { readWebuiSettings } from './webui-settings.js';
@@ -40,7 +41,12 @@ import { closeProjectWatcher, watchProject } from './watch.js';
 import { listArtifacts } from './artifacts.js';
 import { deleteProjectFile, readProjectFile, renameProjectFile, writeProjectFile } from './files.js';
 import { mintPreviewScope, previewScopeRe, validatePreviewScope } from './preview-scopes.js';
-import { injectSnapshotBridge, wantsSnapshotBridge } from './bridges.js';
+import {
+  injectSnapshotBridge,
+  injectTextEditBridge,
+  wantsSnapshotBridge,
+  wantsTextEditBridge,
+} from './bridges.js';
 import { detectEditors, openInEditor, revealDir } from './handoff.js';
 import type { ChatMessage, ToolCall, UiEvent } from './types.js';
 
@@ -75,7 +81,9 @@ function launchConfigFor(id: string): SessionLaunchConfig {
   if (globalInstructions) appendPrompts.push(globalInstructions);
   const projectInstructions = meta?.instructions?.trim();
   if (projectInstructions) appendPrompts.push(projectInstructions);
-  return { model: meta?.model ?? null, thinking: meta?.thinking ?? null, appendPrompts };
+  // 启用中的内置/项目设计 skill 的绝对路径，spawn 时经 pi --skill 显式注入。
+  const skillPaths = enabledSkillPaths(projectDir(id));
+  return { model: meta?.model ?? null, thinking: meta?.thinking ?? null, appendPrompts, skillPaths };
 }
 
 function sessionFor(id: string, cid: string): PiSession {
@@ -481,9 +489,13 @@ app.get(/^\/api\/projects\/([^/]+)\/preview\/([^/]+)\/(.+)$/u, (req, res) => {
   if (req.headers.origin === 'null') res.header('Access-Control-Allow-Origin', '*');
   setProjectPreviewHeaders(res);
   const isHtml = /\.html?$/i.test(rel);
-  if (isHtml && wantsSnapshotBridge(req.query.bridge)) {
+  const wantsSnapshot = wantsSnapshotBridge(req.query.bridge);
+  const wantsEdit = wantsTextEditBridge(req.query.bridge);
+  if (isHtml && (wantsSnapshot || wantsEdit)) {
     try {
-      const html = injectSnapshotBridge(fs.readFileSync(target, 'utf8'));
+      let html = fs.readFileSync(target, 'utf8');
+      if (wantsSnapshot) html = injectSnapshotBridge(html);
+      if (wantsEdit) html = injectTextEditBridge(html);
       return res.type('html').send(html);
     } catch {
       return res.status(404).send('not found');
