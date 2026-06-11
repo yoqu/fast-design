@@ -72,6 +72,8 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
     setTabState(loadTabState(projectId));
     knownEntries.current = null;
     setShowFiles(false);
+    // 清掉上个项目的 handoff 信息,避免新项目顶栏短暂显示旧目录。
+    setHandoff(null);
   }, [projectId]);
 
   useEffect(() => {
@@ -91,10 +93,14 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
   }, [projectId, tabs, active]);
 
   const openTab = useCallback((path: string) => {
-    setTabState((prev) => ({
-      tabs: prev.tabs.includes(path) ? prev.tabs : [...prev.tabs, path],
-      active: path,
-    }));
+    setTabState((prev) => {
+      // 同文件重复打开(如 URL 回馈)直接复用,省一次无意义 re-render。
+      if (prev.active === path && prev.tabs.includes(path)) return prev;
+      return {
+        tabs: prev.tabs.includes(path) ? prev.tabs : [...prev.tabs, path],
+        active: path,
+      };
+    });
     setShowFiles(false);
     setShowQuestions(false);
   }, []);
@@ -178,7 +184,7 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
         <button
           type="button"
           title={focusMode ? '显示聊天' : '隐藏聊天'}
-          aria-label={focusMode ? '显示聊天' : '隐藏聊天'}
+          aria-label="专注模式"
           aria-pressed={focusMode}
           onClick={() => onFocusModeChange(!focusMode)}
           className="rounded-md px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
