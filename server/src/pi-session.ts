@@ -10,6 +10,8 @@ export type SessionLaunchConfig = {
   thinking: string | null;
   /** 追加在内置 SYSTEM_PROMPT_SUFFIX 之后的系统提示段（全局指令、项目指令）。 */
   appendPrompts: string[];
+  /** 启用中的内置/项目设计 skill 绝对路径；spawn 时经 pi --skill 显式注入。 */
+  skillPaths: string[];
 };
 
 const SYSTEM_PROMPT_SUFFIX = `
@@ -99,6 +101,12 @@ export class PiSession {
     const args = ['--mode', 'rpc', '--session-dir', this.sessionDir()];
     for (const prompt of [SYSTEM_PROMPT_SUFFIX, ...cfg.appendPrompts]) {
       args.push('--append-system-prompt', prompt);
+    }
+    // 关掉对全局 ~/.pi/agent/skills 的自动发现，只显式加载启用的内置/项目设计 skill，
+    // 让 agent 上下文不被 lark 等无关 skill 干扰。
+    args.push('--no-skills');
+    for (const skillPath of cfg.skillPaths) {
+      if (fs.existsSync(skillPath)) args.push('--skill', skillPath);
     }
     if (this.hasPriorSessions()) args.push('--continue');
     if (cfg.model && cfg.model !== 'default') args.push('--model', cfg.model);

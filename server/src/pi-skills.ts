@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { piAgentDir, readJsonConfig } from './pi-config.js';
+import { readWebuiSettings, writeWebuiSettings } from './webui-settings.js';
 
-export type SkillScope = 'global' | 'project';
+export type SkillScope = 'global' | 'project' | 'bundled';
 
 export type SkillInfo = {
   name: string;
@@ -21,8 +22,16 @@ function projectSkillsRoot(projectDir: string): string {
   return path.join(projectDir, '.pi', 'skills');
 }
 
+/** 仓库内置设计 skill 根目录；与 projects.ts 的 DATA_ROOT 同源解析，测试经 PI_WEBUI_SKILLS_DIR 覆盖。 */
+function bundledSkillsRoot(): string {
+  return process.env.PI_WEBUI_SKILLS_DIR
+    ? path.resolve(process.env.PI_WEBUI_SKILLS_DIR)
+    : path.resolve(import.meta.dirname, '../../skills');
+}
+
 function skillsRoot(scope: SkillScope, projectDir: string | null): string {
   if (scope === 'global') return globalSkillsRoot();
+  if (scope === 'bundled') return bundledSkillsRoot();
   if (!projectDir) throw new Error('BAD_PATH: project scope 需要 projectDir');
   return projectSkillsRoot(projectDir);
 }
@@ -77,6 +86,11 @@ function direntKind(parent: string, d: fs.Dirent): 'dir' | 'file' | null {
 }
 
 function disabledPatterns(scope: SkillScope, projectDir: string | null): Set<string> {
+  // 内置 skill 的开关存 webui-settings（不写 pi settings.json），存的是 rel（目录名）。
+  if (scope === 'bundled') {
+    const raw = readWebuiSettings().bundledSkillsDisabled;
+    return new Set(Array.isArray(raw) ? raw : []);
+  }
   const file =
     scope === 'global'
       ? path.join(piAgentDir(), 'settings.json')
@@ -145,17 +159,41 @@ function scanRoot(root: string, scope: SkillScope, disabled: Set<string>): Skill
 }
 
 export function listSkills(projectDir: string | null): SkillInfo[] {
-  const out = scanRoot(globalSkillsRoot(), 'global', disabledPatterns('global', null));
+  // 排序：内置设计 skill 置顶，其次全局，最后项目级。
+  const out = scanRoot(bundledSkillsRoot(), 'bundled', disabledPatterns('bundled', null));
+  out.push(...scanRoot(globalSkillsRoot(), 'global', disabledPatterns('global', null)));
   if (projectDir) {
     out.push(...scanRoot(projectSkillsRoot(projectDir), 'project', disabledPatterns('project', projectDir)));
   }
   return out;
 }
 
+/**
+ * 启用中的「内置 + 项目」skill 的绝对目录路径，供 pi `--skill` 注入。
+ * 全局 scope 不在此列——spawn 用 `--no-skills` 关掉全局自动发现，只显式加载这些设计 skill。
+ */
+export function enabledSkillPaths(projectDir: string | null): string[] {
+  return listSkills(projectDir)
+    .filter((s) => s.enabled && (s.scope === 'bundled' || s.scope === 'project'))
+    .map((s) => {
+      const root = s.scope === 'bundled' ? bundledSkillsRoot() : projectSkillsRoot(projectDir!);
+      return path.join(root, s.rel);
+    });
+}
+
 // ---- 启用/禁用 ----
 
 export function setSkillEnabled(scope: SkillScope, rel: string, enabled: boolean, projectDir: string | null): void {
   resolveSkillFile(scope, rel, projectDir); // 路径校验
+  // 内置 skill 的开关写 webui-settings 的 bundledSkillsDisabled（存被禁用的 rel）。
+  if (scope === 'bundled') {
+    const current = readWebuiSettings().bundledSkillsDisabled ?? [];
+    const set = new Set(current);
+    if (enabled) set.delete(rel);
+    else set.add(rel);
+    writeWebuiSettings({ bundledSkillsDisabled: [...set] });
+    return;
+  }
   const file =
     scope === 'global'
       ? path.join(piAgentDir(), 'settings.json')
@@ -180,7 +218,8 @@ const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 export function createSkill(name: string, description: string): SkillInfo {
   if (!SKILL_NAME_RE.test(name)) throw new Error(`BAD_NAME: ${name}（仅小写字母/数字/连字符）`);
-  const dir = path.join(globalSkillsRoot(), name);
+  // 落到内置设计 skill 库：新建即在 UI 可见且会经 --skill 注入 agent（全局目录已对用户隐藏）。
+  const dir = path.join(bundledSkillsRoot(), name);
   if (fs.existsSync(dir)) throw new Error(`SKILL_EXISTS: ${name}`);
   fs.mkdirSync(dir, { recursive: true });
   // 描述压成单行，防止换行注入破坏 frontmatter 结构。
@@ -189,7 +228,7 @@ export function createSkill(name: string, description: string): SkillInfo {
     path.join(dir, 'SKILL.md'),
     `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n\n在这里编写技能说明。\n`,
   );
-  return { name, description: desc, rel: name, scope: 'global', enabled: true };
+  return { name, description: desc, rel: name, scope: 'bundled', enabled: true };
 }
 
 export function readSkillContent(scope: SkillScope, rel: string, projectDir: string | null): string {

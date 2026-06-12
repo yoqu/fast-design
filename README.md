@@ -51,6 +51,12 @@ server/   Express + TypeScript
   src/index.ts      HTTP 路由：chat(NDJSON 流) / events(SSE) / artifacts /
                     file CRUD / preview-url + scoped preview / export(?root)
 data/projects/<id>/ 项目工作区（agent 的 cwd），.webui/ 下存元数据与历史
+skills/   内置设计 skill 库（17 个，源自 open-design）：原型/网页设计这条链路的
+          frontend-design / artifacts-builder / ui-skills / taste-skill 等。
+          会话启动时 pi 以 `--no-skills`（关掉全局 ~/.pi/agent/skills 自动发现）
+          + `--skill <dir>` 只显式注入这些设计 skill 与启用的项目级 skill，
+          开关存 data/webui-settings.json。详见
+          docs/superpowers/specs/2026-06-11-prototype-design-skills-design.md
 ```
 
 ## 测试

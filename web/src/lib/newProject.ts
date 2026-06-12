@@ -40,7 +40,8 @@ export function buildCreateRequest(form: NewProjectForm): CreateProjectRequest {
   return {
     name: trimmedName || autoName(),
     model: form.model,
-    skillId: null,
+    // 原型链路旗舰 skill：作为创建默认记录在 metadata（实际加载看 skill 开关，见设计文档）。
+    skillId: 'frontend-design',
     pendingPrompt: trimmedPrompt || null,
     metadata: {
       kind: 'prototype',

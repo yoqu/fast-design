@@ -121,7 +121,7 @@ export type SkillInfo = {
   name: string;
   description: string;
   rel: string;
-  scope: 'global' | 'project';
+  scope: 'global' | 'project' | 'bundled';
   enabled: boolean;
 };
 

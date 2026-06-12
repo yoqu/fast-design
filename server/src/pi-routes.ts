@@ -61,7 +61,9 @@ function projectDirOf(req: express.Request): string | null {
 }
 
 function skillScope(value: unknown): SkillScope {
-  return value === 'project' ? 'project' : 'global';
+  if (value === 'project') return 'project';
+  if (value === 'bundled') return 'bundled';
+  return 'global';
 }
 
 export type PiRoutesDeps = {

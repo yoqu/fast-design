@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createSkill,
   deleteSkill,
+  enabledSkillPaths,
   listSkills,
   readSkillContent,
   setSkillEnabled,
@@ -13,6 +14,8 @@ import {
 
 let piDir: string;
 let projDir: string;
+let bundledDir: string;
+let dataDir: string;
 
 function writeSkill(root: string, name: string, frontmatter = `---\nname: ${name}\ndescription: 技能 ${name}\n---\n\n正文`) {
   fs.mkdirSync(path.join(root, name), { recursive: true });
@@ -22,13 +25,22 @@ function writeSkill(root: string, name: string, frontmatter = `---\nname: ${name
 beforeEach(() => {
   piDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-skills-pi-'));
   projDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-skills-proj-'));
+  // 内置 skill 根 / data 根隔离到空临时目录，避免泄漏仓库真实 skills/ 与 webui-settings。
+  bundledDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-skills-bundled-'));
+  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-skills-data-'));
   process.env.PI_WEBUI_PI_DIR = piDir;
+  process.env.PI_WEBUI_SKILLS_DIR = bundledDir;
+  process.env.PI_WEBUI_DATA = dataDir;
 });
 
 afterEach(() => {
   delete process.env.PI_WEBUI_PI_DIR;
+  delete process.env.PI_WEBUI_SKILLS_DIR;
+  delete process.env.PI_WEBUI_DATA;
   fs.rmSync(piDir, { recursive: true, force: true });
   fs.rmSync(projDir, { recursive: true, force: true });
+  fs.rmSync(bundledDir, { recursive: true, force: true });
+  fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
 describe('listSkills', () => {
@@ -82,6 +94,54 @@ describe('listSkills', () => {
   });
 });
 
+describe('bundled (内置设计 skill)', () => {
+  it('lists bundled skills first, then global, then project', () => {
+    writeSkill(bundledDir, 'frontend-design');
+    writeSkill(path.join(piDir, 'skills'), 'g1');
+    writeSkill(path.join(projDir, '.pi', 'skills'), 'p1');
+    const skills = listSkills(projDir);
+    expect(skills.map((s) => `${s.scope}:${s.rel}`)).toEqual([
+      'bundled:frontend-design',
+      'global:g1',
+      'project:p1',
+    ]);
+    expect(skills.every((s) => s.enabled)).toBe(true);
+  });
+
+  it('toggle writes bundledSkillsDisabled to webui-settings, not pi settings.json', () => {
+    writeSkill(bundledDir, 'taste-skill');
+    setSkillEnabled('bundled', 'taste-skill', false, null);
+    const settings = JSON.parse(fs.readFileSync(path.join(dataDir, 'webui-settings.json'), 'utf8'));
+    expect(settings.bundledSkillsDisabled).toEqual(['taste-skill']);
+    expect(fs.existsSync(path.join(piDir, 'settings.json'))).toBe(false);
+    expect(listSkills(null).find((s) => s.rel === 'taste-skill')!.enabled).toBe(false);
+    setSkillEnabled('bundled', 'taste-skill', true, null);
+    expect(listSkills(null).find((s) => s.rel === 'taste-skill')!.enabled).toBe(true);
+  });
+
+  it('rejects path traversal on bundled', () => {
+    expect(() => readSkillContent('bundled', '../../../etc/passwd', null)).toThrow(/BAD_PATH/);
+  });
+});
+
+describe('enabledSkillPaths', () => {
+  it('returns abs paths of enabled bundled + project skills, excludes global and disabled', () => {
+    writeSkill(bundledDir, 'frontend-design');
+    writeSkill(bundledDir, 'gsap-core');
+    writeSkill(path.join(piDir, 'skills'), 'g1'); // global 不入注入列表
+    writeSkill(path.join(projDir, '.pi', 'skills'), 'p1');
+    setSkillEnabled('bundled', 'gsap-core', false, null);
+    const paths = enabledSkillPaths(projDir).sort();
+    expect(paths).toEqual(
+      [path.join(bundledDir, 'frontend-design'), path.join(projDir, '.pi', 'skills', 'p1')].sort(),
+    );
+  });
+
+  it('returns empty when nothing enabled / no skills', () => {
+    expect(enabledSkillPaths(null)).toEqual([]);
+  });
+});
+
 describe('setSkillEnabled', () => {
   it('writes -pattern to global settings and removes it on re-enable, preserving other entries', () => {
     writeSkill(path.join(piDir, 'skills'), 'alpha');
@@ -104,10 +164,11 @@ describe('setSkillEnabled', () => {
 });
 
 describe('create / read / write / delete', () => {
-  it('creates a skill with template and validates names', () => {
+  it('creates a skill in the bundled library and validates names', () => {
     const skill = createSkill('my-skill', '我的技能');
     expect(skill.rel).toBe('my-skill');
-    const content = readSkillContent('global', 'my-skill', null);
+    expect(skill.scope).toBe('bundled');
+    const content = readSkillContent('bundled', 'my-skill', null);
     expect(content).toContain('name: my-skill');
     expect(content).toContain('description: 我的技能');
     expect(() => createSkill('Bad Name', 'x')).toThrow(/BAD_NAME/);
@@ -116,14 +177,14 @@ describe('create / read / write / delete', () => {
 
   it('writes content only with valid frontmatter', () => {
     createSkill('w1', 'desc');
-    expect(() => writeSkillContent('global', 'w1', '没有 frontmatter', null)).toThrow(/BAD_FRONTMATTER/);
-    writeSkillContent('global', 'w1', '---\nname: w1\ndescription: 新描述\n---\n\n新正文', null);
-    expect(readSkillContent('global', 'w1', null)).toContain('新描述');
+    expect(() => writeSkillContent('bundled', 'w1', '没有 frontmatter', null)).toThrow(/BAD_FRONTMATTER/);
+    writeSkillContent('bundled', 'w1', '---\nname: w1\ndescription: 新描述\n---\n\n新正文', null);
+    expect(readSkillContent('bundled', 'w1', null)).toContain('新描述');
   });
 
   it('deletes skill directories and root md skills', () => {
     createSkill('gone', 'x');
-    deleteSkill('global', 'gone', null);
+    deleteSkill('bundled', 'gone', null);
     expect(listSkills(null)).toEqual([]);
   });
 

@@ -35,7 +35,7 @@ describe('buildCreateRequest', () => {
     expect(req).toEqual({
       name: '我的应用',
       model: 'anthropic/claude',
-      skillId: null,
+      skillId: 'frontend-design',
       pendingPrompt: '做一个登录页',
       metadata: {
         kind: 'prototype',
