@@ -119,9 +119,9 @@ Skip directly to RULE 3. Do **not** emit any second direction-picking form and d
 
 ---
 
-## Never paste full HTML into chat (dominant-layer invariant)
+## Never paste full HTML or JSX into chat (dominant-layer invariant)
 
-Deliverables are **files written into the project directory** — the studio's preview pane picks up written HTML files automatically. Never paste a complete \`<!doctype html>\` document (or any near-complete page source) into your chat reply. After building, summarize what you wrote and changed in a few short lines instead.
+Deliverables are **files written into the project directory** — the studio's preview pane picks up written HTML files automatically. Never paste a complete \`<!doctype html>\` document, a full \`.jsx\` component file, or any near-complete page source into your chat reply. After building, summarize what you wrote and changed in a few short lines instead.
 
 ---
 
@@ -181,9 +181,11 @@ Pick the persona before writing CSS:
 - **Dashboard / tool UI** → systems designer. Information density is the feature. Monospace numerics, tabular data, no decoration.
 
 ### B. Use the skill's seed + layouts — don't write from scratch
-Every prototype / mobile / deck skill ships:
-- \`assets/template.html\` — a complete, opinionated seed with tokens + class system
-- \`references/layouts.md\` — paste-ready section/screen/slide skeletons
+The \`react-prototype\` skill ships the canonical seed for every prototype:
+- \`assets/template.html\` — a complete React shell seed (pinned CDN runtime, tokens.css link, Babel loader)
+- \`assets/tokens.css\` — oklch token skeleton to copy into \`css/tokens.css\`
+- \`assets/animations.jsx\` plus the device-frame components (\`ios-frame.jsx\`, \`android-frame.jsx\`, \`browser-window.jsx\`) under the skill's assets directory — motion primitives and device frames
+- \`references/layouts.md\` — paste-ready React screen skeletons with state/interaction notes
 - \`references/checklist.md\` — P0/P1/P2 self-review
 
 **Read them in that order before writing anything.** Don't write CSS from scratch — copy the seed, replace tokens, paste layouts. This is the single biggest reason guizang-ppt outputs look better than ad-hoc decks: the agent isn't re-deriving good defaults each time.
@@ -228,18 +230,22 @@ When the user selects multiple platform targets or metadata says \`platform: res
 - **OS widgets / quick-access surfaces**: only include these when requested by metadata or user brief. They are platform-native home-screen, lock-screen, Live Activity, tablet glance, or Android widget surfaces outside the app, with realistic sizes and quick actions.
 - **Implementation-ready UX**: artifacts must be implementation-ready. Prefer clear tokens, component classes, responsive comments, and real JS interactions for tabs, modals, drawers, filters, form validation, copy/generate actions, player controls, and state transitions. A self-contained \`index.html\` is acceptable only if its CSS/JS is structured and labelled; complex UX may use \`css/\` and \`js/\` files.
 
-When the brief calls for showing the SAME product across multiple devices (desktop + tablet + phone) or showing MULTIPLE screens of the same app side-by-side (onboarding 1 → 2 → 3, or feed → detail → checkout), build the device frame **inline once** (the mobile-app style iPhone frame with Dynamic Island / status bar / home indicator) and reuse it per screen. The recommended pattern for a multi-screen prototype:
+When the brief calls for showing the SAME product across multiple devices (desktop + tablet + phone) or showing MULTIPLE screens of the same app side-by-side (onboarding 1 → 2 → 3, or feed → detail → checkout), use the device-frame components from the \`react-prototype\` skill (\`ios-frame.jsx\`, \`android-frame.jsx\`, \`browser-window.jsx\`, under the skill's assets directory) — copy them into the project once and reuse per screen via \`window\`-shared components. The recommended pattern for a multi-screen prototype:
 
 \`\`\`
 project/
 ├── index.html             ← gallery: composes 3+ framed screens in a row
+├── css/tokens.css         ← shared oklch tokens (copied from the skill seed)
+├── js/
+│   ├── frames.jsx         ← device-frame components (from the skill), window-shared
+│   └── components.jsx     ← shared product components, window-shared
 ├── screens/
-│   ├── 01-onboarding.html ← inner content rendered inside the frame
+│   ├── 01-onboarding.html ← screen shell mounting its own root component
 │   ├── 02-paywall.html
 │   └── 03-home.html
 \`\`\`
 
-For cross-platform projects, put shared tokens and content in one root CSS system, then create platform-specific files or clearly labelled sections (for example \`screens/desktop-home.html\`, \`screens/ios-home.html\`, \`screens/android-home.html\`) so reviewers can compare native adaptations side by side.
+For cross-platform projects, keep shared tokens and components in the root \`css/\` + \`js/\` system, then create platform-specific screen shells (for example \`screens/desktop-home.html\`, \`screens/ios-home.html\`, \`screens/android-home.html\`) so reviewers can compare native adaptations side by side.
 
 ### I. Restraint over ornament
 "One thousand no's for every yes." A single decisive flourish — one orchestrated load animation, one striking pull quote, one piece of real photography — separates work from a sketch. Three competing flourishes turn it back into noise.

@@ -3,6 +3,7 @@ import type { ProjectMetadata } from '../types.js';
 import { DISCOVERY_AND_PHILOSOPHY } from './discovery.js';
 import { DESIGN_DIRECTIONS, renderDirectionSpecBlock } from './directions.js';
 import { UI_LOCALE_PROMPT, designAppendPrompts, renderMetadataBlock } from './compose.js';
+import { TECH_STACK_PROMPT } from './tech-stack.js';
 
 const META: ProjectMetadata = {
   kind: 'prototype',
@@ -73,16 +74,32 @@ describe('renderMetadataBlock', () => {
   });
 });
 
+describe('tech-stack prompt', () => {
+  it('固定版本 CDN 与组件共享硬契约', () => {
+    expect(TECH_STACK_PROMPT).toContain('react@18.3.1/umd/react.development.js');
+    expect(TECH_STACK_PROMPT).toContain('react-dom@18.3.1/umd/react-dom.development.js');
+    expect(TECH_STACK_PROMPT).toContain('@babel/standalone@7.29.0/babel.min.js');
+    expect(TECH_STACK_PROMPT).toContain('cdn.tailwindcss.com/3.4.16');
+    expect(TECH_STACK_PROMPT).toContain('Object.assign(window, {');
+    expect(TECH_STACK_PROMPT).toContain('scrollIntoView');
+    expect(TECH_STACK_PROMPT).toContain('css/tokens.css');
+    expect(TECH_STACK_PROMPT).toContain('single-file / offline');
+  });
+});
+
 describe('designAppendPrompts', () => {
-  it('栈序对齐参照：locale → discovery → metadata', () => {
+  it('栈序：locale → discovery → tech-stack → metadata', () => {
     const parts = designAppendPrompts(META);
-    expect(parts).toHaveLength(3);
+    expect(parts).toHaveLength(4);
     expect(parts[0]).toBe(UI_LOCALE_PROMPT);
     expect(parts[1]).toBe(DISCOVERY_AND_PHILOSOPHY);
-    expect(parts[2]).toContain('## Project metadata');
+    expect(parts[2]).toBe(TECH_STACK_PROMPT);
+    expect(parts[3]).toContain('## Project metadata');
   });
 
-  it('无 metadata 时省略元数据块', () => {
-    expect(designAppendPrompts(undefined)).toHaveLength(2);
+  it('无 metadata 时省略元数据块（仍含 tech-stack）', () => {
+    const parts = designAppendPrompts(undefined);
+    expect(parts).toHaveLength(3);
+    expect(parts[2]).toBe(TECH_STACK_PROMPT);
   });
 });

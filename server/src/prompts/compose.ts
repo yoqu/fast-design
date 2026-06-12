@@ -10,6 +10,7 @@
  */
 import type { ProjectMetadata } from '../types.js';
 import { DISCOVERY_AND_PHILOSOPHY } from './discovery.js';
+import { TECH_STACK_PROMPT } from './tech-stack.js';
 
 /**
  * UI locale override — 参照 system.ts renderUiLocalePrompt 的 zh-CN 分支。
@@ -85,10 +86,10 @@ export function renderMetadataBlock(metadata: ProjectMetadata | undefined): stri
     '- **app-specific modules rule**: include domain-specific in-app modules/components by default (cards, panels, controls, charts, lists, quick actions, status modules, mini players, checkout/cart summaries, etc. as appropriate). These are product UI modules, not OS home-screen widgets. Give each major module a clear purpose, states, and responsive behavior instead of generic card grids.',
   );
   lines.push(
-    '- **implementation-ready UX rule**: the artifact must be implementation-ready, not a static screenshot. Structure CSS tokens/components/responsive sections clearly; include real JavaScript behavior for meaningful UX such as tabs, dialogs, drawers, filters, generation/copy actions, validation, playback controls, or state transitions. If keeping a self-contained `index.html`, put the CSS/JS in clearly labelled blocks; for complex UX, generate `css/` and `js/` files when useful.',
+    '- **implementation-ready UX rule**: the artifact must be implementation-ready, not a static screenshot. Follow the default React stack contract: `.html` shells per screen, interactive logic in `.jsx` components (Babel standalone), shared tokens in `css/tokens.css`. Meaningful UX such as tabs, dialogs, drawers, filters, generation/copy actions, validation, playback controls, or state transitions must be real React state + handlers, not decorative markup.',
   );
   lines.push(
-    '- **interaction-fidelity rule**: when the requested screen includes user input, generation, copying, validation, login, checkout, filtering, or any action verb, build real interactive controls for that screen. Do not substitute static text rows, prefilled-only mockups, screenshot-like device frames, or decorative state cards for editable inputs and working actions.',
+    '- **interaction-fidelity rule**: when the requested screen includes user input, generation, copying, validation, login, checkout, filtering, or any action verb, build real controlled React components for that screen (useState + handlers + working state transitions). Do not substitute static text rows, prefilled-only mockups, screenshot-like device frames, or decorative state cards for editable inputs and working actions.',
   );
   if (metadata.includeLandingPage) {
     lines.push(
@@ -111,7 +112,7 @@ export function renderMetadataBlock(metadata: ProjectMetadata | undefined): stri
  * discovery 主导层 → 元数据块殿后）。调用方在其后拼全局/项目自定义指令。
  */
 export function designAppendPrompts(metadata: ProjectMetadata | undefined): string[] {
-  const parts = [UI_LOCALE_PROMPT, DISCOVERY_AND_PHILOSOPHY];
+  const parts = [UI_LOCALE_PROMPT, DISCOVERY_AND_PHILOSOPHY, TECH_STACK_PROMPT];
   const metaBlock = renderMetadataBlock(metadata);
   if (metaBlock) parts.push(metaBlock);
   return parts;
