@@ -86,7 +86,7 @@ export class Turn {
   private subscribers = new Set<(ev: UiEvent) => void>();
   private journalPath: string | null;
   private finished = false;
-  readonly fold = createTurnFold();
+  private fold = createTurnFold();
 
   constructor(journalPath: string | null) {
     this.journalPath = journalPath;
@@ -116,7 +116,16 @@ export class Turn {
     }
     this.buffer.push(ev);
     foldTurnEvent(this.fold, ev);
-    for (const fn of this.subscribers) fn(ev);
+    // Fix 1: 快照扇出——隔离抛错订阅者，防止传播进 pi stdout 处理器；
+    // Fix 4: 快照也消除了扇出期间新增订阅者导致的重复投递。
+    for (const fn of [...this.subscribers]) {
+      try {
+        fn(ev);
+      } catch (err) {
+        this.subscribers.delete(fn);
+        console.error(`[turns] 订阅者回调异常，已退订: ${err instanceof Error ? err.message : err}`);
+      }
+    }
   }
 
   /**
@@ -137,9 +146,23 @@ export class Turn {
   end(): ChatMessage {
     if (!this.finished) {
       this.finished = true;
-      for (const fn of this.subscribers) fn({ type: 'done' });
+      // Fix 1: 快照扇出隔离抛错订阅者（与 emit 保持一致）。
+      for (const fn of [...this.subscribers]) {
+        try {
+          fn({ type: 'done' });
+        } catch (err) {
+          console.error(`[turns] 订阅者回调异常，已退订: ${err instanceof Error ? err.message : err}`);
+        }
+      }
       this.subscribers.clear();
-      if (this.journalPath) fs.rmSync(this.journalPath, { force: true });
+      // Fix 3: journal 清理失败不杀回合（如 EISDIR 路径被目录占用时）。
+      if (this.journalPath) {
+        try {
+          fs.rmSync(this.journalPath, { force: true });
+        } catch (err) {
+          console.error(`[turns] journal 清理失败: ${err instanceof Error ? err.message : err}`);
+        }
+      }
     }
     return finishTurnFold(this.fold);
   }
@@ -159,6 +182,8 @@ export function activeTurn(projectId: string, cid: string): Turn | undefined {
 /**
  * 启动一个回合：注册 Turn，把 run 的事件写穿 journal 并广播；结束后把折叠
  * 出的 assistant 消息落历史——不依赖是否有客户端连着（回合与连接解耦）。
+ * Fix 2: 同一 key 已有进行中回合时同步抛错，防止新 Turn 构造器 rmSync 踩踏 live journal。
+ * finished 永不 reject，调用方可安全 fire-and-forget。
  */
 export function startTurn(
   projectId: string,
@@ -166,6 +191,8 @@ export function startTurn(
   run: (emit: (ev: UiEvent) => void) => Promise<void>,
 ): { turn: Turn; finished: Promise<void> } {
   const key = turnKey(projectId, cid);
+  // Fix 2: 同 key 防重入——先检查再构造，避免新 Turn 的 rmSync 误删 live journal。
+  if (turns.get(key)) throw new Error('该会话已有进行中的回合');
   const turn = new Turn(turnJournalPath(projectId, cid));
   turns.set(key, turn);
   const finished = run((ev) => turn.emit(ev))
@@ -173,11 +200,18 @@ export function startTurn(
       turn.emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     })
     .then(() => {
-      turns.delete(key);
-      const assistant = turn.end();
-      // 回合进行中会话可能已被删除：跳过持久化，避免复活已删历史文件。
-      if (getConversation(projectId, cid)) {
-        appendConversationHistory(projectId, cid, assistant);
+      // Fix 3: 收尾整体捕获——finished 永不 reject。
+      try {
+        const assistant = turn.end();
+        // Fix 2: 身份校验删除，防止二次 startTurn 竞态（理论上前面已拦截，双保险）。
+        if (turns.get(key) === turn) turns.delete(key);
+        // 回合进行中会话可能已被删除：跳过持久化，避免复活已删历史文件。
+        if (getConversation(projectId, cid)) {
+          appendConversationHistory(projectId, cid, assistant);
+        }
+      } catch (err) {
+        if (turns.get(key) === turn) turns.delete(key);
+        console.error(`[turns] 回合收尾失败: ${err instanceof Error ? err.message : err}`);
       }
     });
   return { turn, finished };
@@ -226,10 +260,11 @@ export function recoverInterruptedTurns(): void {
           appendConversationHistory(project.id, cid, assistant);
           console.error(`[turns] 恢复中断回合: ${project.id}/${cid}（${events.length} 事件）`);
         }
+        // Fix 5: rmSync 移入 try，EPERM 等清理错误只影响当前文件，不中断其余恢复。
+        fs.rmSync(full, { force: true });
       } catch (err) {
         console.error(`[turns] 恢复 ${project.id}/${cid} 失败: ${err instanceof Error ? err.message : err}`);
       }
-      fs.rmSync(full, { force: true });
     }
   }
 }

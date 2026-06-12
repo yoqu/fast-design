@@ -131,6 +131,41 @@ describe('Turn', () => {
     turn.end();
     expect(fs.existsSync(jp)).toBe(false);
   });
+
+  // Fix 7: end 后 emit 是空操作
+  it('end 后 emit 是空操作，缓冲不变，订阅者不再被调用', () => {
+    const turn = new Turn(null);
+    turn.emit({ type: 'text_delta', delta: 'a' });
+    turn.end();
+    // end 后的 emit 不应进入缓冲
+    turn.emit({ type: 'text_delta', delta: 'b' });
+    // 回放缓冲只含 'a'，没有 'b'，并且立即补 done
+    const late: UiEvent[] = [];
+    turn.subscribe((ev) => late.push(ev));
+    expect(late).toEqual([
+      { type: 'text_delta', delta: 'a' },
+      { type: 'done' },
+    ]);
+  });
+
+  // Fix 3: end 在 journal 路径被目录占用时不抛错（EISDIR 模拟）
+  it('end 在 journal 路径被目录占用时不抛错（Fix 3 EISDIR）', () => {
+    const id = makeProject('turn-eisdir');
+    const jp = path.join(turnsDir(id), 'eisdir-test.ndjson');
+    fs.mkdirSync(path.dirname(jp), { recursive: true });
+    const turn = new Turn(jp);
+    turn.emit({ type: 'text_delta', delta: 'x' });
+    // 把 journal 文件替换成同名目录（含子文件），触发 EISDIR
+    fs.rmSync(jp, { force: true });
+    fs.mkdirSync(jp);
+    fs.writeFileSync(path.join(jp, 'trap'), 'x');
+    // end() 不应抛错
+    expect(() => turn.end()).not.toThrow();
+    // 幂等再调也安全，返回值正确
+    expect(turn.end().content).toBe('x');
+    // 清理陷阱目录
+    fs.rmSync(jp, { recursive: true, force: true });
+  });
 });
 
 describe('startTurn / activeTurn', () => {
@@ -187,6 +222,68 @@ describe('startTurn / activeTurn', () => {
     fs.writeFileSync(jp, '{}\n');
     removeTurnJournal(id, cid);
     expect(fs.existsSync(jp)).toBe(false);
+  });
+
+  // Fix 1: 抛错订阅者被自动退订，不影响其他订阅者与回合正常收尾
+  it('抛错订阅者被自动退订，不影响其他订阅者与 startTurn 正常收尾', async () => {
+    const id = makeProject('turn-throw-sub');
+    const cid = (await listConversations(id))[0].id;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const eventsB: UiEvent[] = [];
+    let throwerCallCount = 0;
+
+    const { turn, finished } = startTurn(id, cid, async (emit) => {
+      await gate; // 等订阅者注册后再发事件
+      emit({ type: 'text_delta', delta: 'hello' });
+      emit({ type: 'text_delta', delta: ' world' });
+    });
+
+    // 第一个订阅者：每次都抛错
+    turn.subscribe(() => {
+      throwerCallCount++;
+      throw new Error('subscriber boom');
+    });
+    // 第二个订阅者：正常收集事件
+    turn.subscribe((ev) => eventsB.push(ev));
+
+    release();
+    await finished;
+
+    // 第一个事件触发抛错，退订后不再调用
+    expect(throwerCallCount).toBe(1);
+    // B 收到所有 text_delta 事件 + done
+    expect(eventsB.filter((e) => e.type === 'text_delta')).toHaveLength(2);
+    expect(eventsB.at(-1)).toEqual({ type: 'done' });
+    // 回合正常写历史
+    expect(readConversationHistory(id, cid).at(-1)).toMatchObject({ role: 'assistant', content: 'hello world' });
+  });
+
+  // Fix 2: 同 key 二次 startTurn 同步抛错，首次回合继续正常完成
+  it('同 key 二次 startTurn 同步抛错，首次回合继续正常完成', async () => {
+    const id = makeProject('turn-double');
+    const cid = (await listConversations(id))[0].id;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+
+    const { turn, finished } = startTurn(id, cid, async (emit) => {
+      emit({ type: 'text_delta', delta: '正常' });
+      await gate;
+    });
+    expect(activeTurn(id, cid)).toBe(turn);
+
+    // 第二次 startTurn 应同步抛错，且不影响第一次回合
+    expect(() => startTurn(id, cid, async () => {})).toThrow('该会话已有进行中的回合');
+
+    // 第一次回合仍然注册
+    expect(activeTurn(id, cid)).toBe(turn);
+
+    release();
+    await finished;
+
+    // 第一次回合正常完成并写历史
+    expect(readConversationHistory(id, cid).at(-1)).toMatchObject({ role: 'assistant', content: '正常' });
+    expect(activeTurn(id, cid)).toBeUndefined();
   });
 });
 
