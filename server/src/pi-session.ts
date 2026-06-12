@@ -223,7 +223,13 @@ export class PiSession {
   dispose(): void {
     const child = this.child;
     this.child = null;
-    this.endTurn();
+    // 进行中被销毁（删会话/删项目/换模型）：必须结算 prompt promise，
+    // 否则 turns.ts 的回合永远收不到尾、订阅者等不到 done。
+    if (this.busy) {
+      this.failTurn('会话已销毁');
+    } else {
+      this.endTurn();
+    }
     if (child && !child.killed) {
       try {
         child.stdin?.end();

@@ -220,8 +220,8 @@ app.delete('/api/projects/:id/conversations/:cid', (req, res) => {
   const key = sessionKey(id, cid);
   sessions.get(key)?.dispose();
   sessions.delete(key);
-  removeTurnJournal(id, cid);
   if (!deleteConversation(id, cid)) return res.status(404).json({ error: 'conversation not found' });
+  removeTurnJournal(id, cid);
   res.json({ ok: true });
 });
 
