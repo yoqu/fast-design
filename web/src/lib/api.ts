@@ -152,6 +152,29 @@ export const api = {
 
 export { encodePath };
 
+/** 逐行消费 NDJSON 响应流，对每行事件调用 onEvent。 */
+async function consumeNdjson(res: Response, onEvent: (ev: UiEvent) => void): Promise<void> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 1);
+      if (!line) continue;
+      try {
+        onEvent(JSON.parse(line) as UiEvent);
+      } catch {
+        // skip malformed line
+      }
+    }
+  }
+}
+
 /**
  * POST a chat message and invoke onEvent for each NDJSON line of the
  * streamed response. Resolves when the stream ends.
@@ -180,25 +203,25 @@ export async function streamChat(
     }
     throw new Error(detail || '请求失败');
   }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, idx).trim();
-      buffer = buffer.slice(idx + 1);
-      if (!line) continue;
-      try {
-        onEvent(JSON.parse(line) as UiEvent);
-      } catch {
-        // skip malformed line
-      }
-    }
-  }
+  await consumeNdjson(res, onEvent);
+}
+
+/**
+ * 续接进行中的回合（刷新/切回会话时调用）。空闲（204）返回 null；
+ * 进行中返回消费函数——调用后回放已缓冲事件并实时续流直到回合结束。
+ * 拆成两步是为了让调用方在确认有回合后、消费前先补 streaming 占位消息。
+ */
+export async function attachTurn(
+  projectId: string,
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<((onEvent: (ev: UiEvent) => void) => Promise<void>) | null> {
+  const res = await fetch(`/api/projects/${projectId}/conversations/${conversationId}/chat/stream`, {
+    signal,
+  });
+  if (res.status === 204) return null;
+  if (!res.ok || !res.body) throw new Error(res.statusText || '续接失败');
+  return (onEvent) => consumeNdjson(res, onEvent);
 }
 
 /** Subscribe to project file-change events. Returns a cleanup function. */
