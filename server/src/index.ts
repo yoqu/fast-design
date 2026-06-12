@@ -77,8 +77,8 @@ const sessionKey = (projectId: string, cid: string) => `${projectId}:${cid}`;
 
 function launchConfigFor(id: string): SessionLaunchConfig {
   const meta = getProject(id);
-  // 设计链路提示栈（locale → discovery 主导层 → 项目元数据块），对齐参照
-  // composeSystemPrompt 的栈序；全局/项目自定义指令拼在其后。
+  // 设计链路提示栈（locale → discovery 主导层 → 技术栈契约 → 项目元数据块），
+  // 对齐参照 composeSystemPrompt 的栈序；全局/项目自定义指令拼在其后。
   const appendPrompts: string[] = designAppendPrompts(meta?.metadata);
   const globalInstructions = readWebuiSettings().instructions?.trim();
   if (globalInstructions) appendPrompts.push(globalInstructions);
