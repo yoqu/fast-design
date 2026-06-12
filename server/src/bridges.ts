@@ -221,6 +221,49 @@ const URL_PREVIEW_TEXT_EDIT_BRIDGE = `<script data-pi-text-edit-bridge>
   var session = null;
   var pending = {};
   var seq = 0;
+  // ── Babel 浏览器内插桩（spec 附录 B）────────────────────────────────
+  // 本脚本注入在 </body> 前、同步执行，早于 @babel/standalone 的
+  // DOMContentLoaded 编译钩子：先注册 pi-loc 插件给每个小写 JSX 宿主元素
+  // 打 data-pi-loc="<fileIdx>:<line>:<column>"，再给 text/babel|text/jsx
+  // 脚本补 data-plugins。注意 data-plugins 会整体覆盖 standalone 的默认
+  // 插件，必须带上默认三件套。无 window.Babel 的纯 HTML 页面静默跳过。
+  var locFiles = [];
+  (function(){
+    try {
+      var B = window.Babel;
+      if (!B || !B.registerPlugin || (B.availablePlugins && B.availablePlugins['pi-loc'])) return;
+      B.registerPlugin('pi-loc', function(babel){
+        var t = babel.types;
+        return { visitor: { JSXOpeningElement: function(path, state){
+          var node = path.node;
+          if (!node.loc || !node.name || node.name.type !== 'JSXIdentifier') return;
+          var first = node.name.name.charAt(0);
+          if (first < 'a' || first > 'z') return;
+          for (var i = 0; i < node.attributes.length; i++){
+            var attr = node.attributes[i];
+            if (attr.type === 'JSXAttribute' && attr.name && attr.name.name === 'data-pi-loc') return;
+          }
+          var fname = (state.file && state.file.opts && state.file.opts.filename) || '';
+          if (!fname) return;
+          var idx = locFiles.indexOf(fname);
+          if (idx === -1){ locFiles.push(fname); idx = locFiles.length - 1; }
+          node.attributes.push(t.jsxAttribute(
+            t.jsxIdentifier('data-pi-loc'),
+            t.stringLiteral(idx + ':' + node.loc.start.line + ':' + node.loc.start.column)
+          ));
+        } } };
+      });
+      var DEFAULT_PLUGINS = 'transform-class-properties,transform-object-rest-spread,transform-flow-strip-types';
+      var scripts = document.getElementsByTagName('script');
+      for (var i = 0; i < scripts.length; i++){
+        var s = scripts[i];
+        var type = (s.type || '').split(';')[0].trim();
+        if (type !== 'text/babel' && type !== 'text/jsx') continue;
+        var dp = s.getAttribute('data-plugins');
+        s.setAttribute('data-plugins', dp ? dp + ',pi-loc' : DEFAULT_PLUGINS + ',pi-loc');
+      }
+    } catch (_) {}
+  })();
   function isSkippable(el){
     var tag = el && el.tagName ? el.tagName.toLowerCase() : '';
     return tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'textarea';
@@ -251,6 +294,32 @@ const URL_PREVIEW_TEXT_EDIT_BRIDGE = `<script data-pi-text-edit-bridge>
       fn(n);
     }
   }
+  // 最近 data-pi-loc 祖先的插桩位置；occurrence = 该祖先子树内同值文本
+  // 节点中本节点的序号（与宿主 applyTextEditAtLoc 的对位口径一致）。
+  function locInfoFor(node){
+    var el = node.parentElement;
+    while (el && el.nodeType === 1){
+      var raw = el.getAttribute && el.getAttribute('data-pi-loc');
+      if (raw){
+        var parts = raw.split(':');
+        var source = locFiles[parseInt(parts[0], 10)];
+        var line = parseInt(parts[1], 10);
+        var column = parseInt(parts[2], 10);
+        if (typeof source !== 'string' || !source || !(line >= 1) || !(column >= 0)) return null;
+        var occ = 0;
+        var tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+        var n;
+        while ((n = tw.nextNode())){
+          if (n === node) break;
+          var p = n.parentElement;
+          if (p && !isSkippable(p) && n.nodeValue === node.nodeValue) occ++;
+        }
+        return { source: source, line: line, column: column, occurrence: occ };
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }
   function snapshotRecords(el){
     var targets = [];
     var tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
@@ -267,7 +336,9 @@ const URL_PREVIEW_TEXT_EDIT_BRIDGE = `<script data-pi-text-edit-bridge>
       var key = n.nodeValue;
       var idx = counts[key] || 0;
       counts[key] = idx + 1;
-      if (targets.indexOf(n) !== -1) records.push({ node: n, value: n.nodeValue, occurrence: idx });
+      if (targets.indexOf(n) !== -1){
+        records.push({ node: n, value: n.nodeValue, occurrence: idx, loc: locInfoFor(n) });
+      }
     });
     return records;
   }
@@ -306,7 +377,11 @@ const URL_PREVIEW_TEXT_EDIT_BRIDGE = `<script data-pi-text-edit-bridge>
     for (var i = 0; i < s.records.length; i++){
       var r = s.records[i];
       var current = r.node.parentNode ? r.node.nodeValue : '';
-      if (current !== r.value) edits.push({ oldText: r.value, newText: current, occurrence: r.occurrence });
+      if (current !== r.value){
+        var item = { oldText: r.value, newText: current, occurrence: r.occurrence };
+        if (r.loc) item.loc = r.loc;
+        edits.push(item);
+      }
     }
     if (!edits.length) return;
     var id = 'pi-edit-' + (++seq);

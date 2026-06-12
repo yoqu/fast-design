@@ -62,4 +62,15 @@ describe('injectTextEditBridge', () => {
     expect(once).toContain('data-od-url-snapshot-bridge');
     expect(once).toContain('data-pi-text-edit-bridge');
   });
+
+  it('ships the Babel pi-loc instrumentation (spec 附录 B)', () => {
+    const out = injectTextEditBridge('<body></body>');
+    // registerPlugin + data-plugins 补丁（必须保留 standalone 默认插件三件套，
+    // data-plugins 会整体覆盖默认值）。
+    expect(out).toContain("registerPlugin('pi-loc'");
+    expect(out).toContain('data-pi-loc');
+    expect(out).toContain('transform-class-properties,transform-object-rest-spread,transform-flow-strip-types');
+    // 提交协议携带 loc。
+    expect(out).toMatch(/loc/);
+  });
 });

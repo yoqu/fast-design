@@ -14,8 +14,8 @@
 ### 非目标（YAGNI）
 
 - 属性文案（alt/placeholder/title）、富文本/结构编辑、样式编辑；
-- JS 渲染文本的跨文件溯源（.jsx 等）——检测到无法定位时报错即可；
-- 多人协同/冲突合并；预览文件以外的文件写回。
+- ~~JS 渲染文本的跨文件溯源（.jsx 等）——检测到无法定位时报错即可~~（2026-06-11 已实现，见附录 A）；
+- 多人协同/冲突合并。
 
 ## 2. 方案选型
 
@@ -126,3 +126,51 @@ htmlTextRegions(source): Array<{ start: number; end: number }>
 3. 撤销逐步还原文件与画面；
 4. 对 Babel/JSX 渲染页面的文本编辑给出明确错误且页面文本还原；
 5. `pnpm test`、`pnpm build` 全绿。
+
+## 附录 A：脚本源码降级定位（2026-06-11 追加）
+
+实测中用户预览的全是 React/Babel JSX 页面（body 仅 `<div id="root">`），原"定位失败报错"
+的边界使编辑模式完全不可用，故补齐脚本源码降级定位：
+
+- `textEdit.ts` 新增 `htmlScriptSources`（扫内联脚本内容区间 + 外部 src，引号感知、跳注释）、
+  `resolveScriptPath`（相对 HTML 目录 / 项目根解析，外链与越界返回 null）、
+  `planTextEdits`（每 op 先试 HTML 文本区域，未命中则要求在「内联脚本 + 本地脚本文件」全集
+  中**恰好出现一次**才替换——JS 渲染下 DOM occurrence 与源码顺序无对应关系，多处命中报
+  ambiguous 而不猜）。
+- 脚本侧替换是精确原文匹配 + 原文写回（无实体编码）；newText 引入 oldText 没有的
+  `' " \` \\ < > { }` 换行或含 `</script` 时报 unsafe 拒绝，防破坏 JS/JSX 语法。
+- FileViewer：HTML 直接命中仍走原路径（不读脚本）；降级时并发拉取本地脚本、按 plan 多文件
+  写回；undo 栈由整文件字符串改为受影响文件快照组 `{path, content}[]`。
+- 错误文案三分：定位失败「可能由脚本动态拼接」/「出现多处，无法唯一定位」/「含可能破坏
+  脚本语法的字符」。
+- 已知边界：同一文案在多个源文件重复（如 C 端/B 端各写一份数据）时报 ambiguous，需在源码
+  中改；动态拼接文本（变量插值）仍无法定位。
+
+## 附录 B：Babel 浏览器内插桩精确定位（2026-06-11 三期）
+
+附录 A 的唯一匹配在真实项目里大量报 ambiguous（C 端/B 端各写一份数据，长标题都重复）。
+利用「页面用 @babel/standalone 在浏览器内编译」的特点做零构建链路插桩：
+
+- **时机**：text-edit bridge 注入在 `</body>` 前同步执行，早于 Babel standalone 的
+  DOMContentLoaded 编译钩子（实测 7.29.0：`window.addEventListener('DOMContentLoaded',
+  transformScriptTags)`）。
+- **插桩**：bridge 启动时 `Babel.registerPlugin('pi-loc', ...)`——JSXOpeningElement 且
+  名字为小写 JSXIdentifier（宿主元素，组件名会变 props 不落 DOM）时 push 属性
+  `data-pi-loc="<fileIdx>:<line>:<column>"`（loc 为 babel 1-based line / 0-based column）；
+  文件表存 `window.__piLocFiles`（`state.file.opts.filename`：外部脚本 = script.src 绝对
+  URL，内联 = "Inline Babel script (N)"）。再给每个 `text/babel|text/jsx` script 补
+  `data-plugins`：**无则必须带默认三件套**（transform-class-properties,
+  transform-object-rest-spread,transform-flow-strip-types——data-plugins 会整体覆盖默认），
+  有则追加 `,pi-loc`。无 window.Babel 的纯 HTML 页面静默跳过。
+- **采集**：snapshotRecords 时从文本节点父链找最近 `data-pi-loc` 祖先，occurrence = 该
+  祖先子树内同值文本节点序号；commit edits 项新增可选
+  `loc: { source, line, column, occurrence }`。
+- **宿主写回**（textEdit.ts）：`resolveLocSource` 把 source 还原为项目文件
+  （URL 取 `/preview/<scope>/(.+)` 解码）或第 N 个内联 babel 脚本（htmlScriptSources
+  inline 条目带 type）；`applyTextEditAtLoc` 由 line/column 算 offset，从 offset 起取第
+  occurrence+1 个 oldText 精确匹配替换（安全校验同附录 A）。planTextEdits 中**带 loc 的
+  op 优先走 loc**（同文件多 op 按 offset 降序替换防偏移），loc 解析/命中失败回落附录 A
+  链路。组件 children 文本（`<Button>报名</Button>`）的最近宿主祖先 loc 指向组件定义处、
+  搜不到字面量 → 自然回落 unique 匹配。
+- **不泄漏**：snapshot bridge 输出 PNG（canvas），data-pi-loc 只活在预览 DOM。
+- 协议向后兼容：无 loc 字段的 commit 行为与附录 A 一致。

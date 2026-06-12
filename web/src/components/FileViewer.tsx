@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import type { ProjectArtifact } from '../lib/artifacts';
 import { reduceTweaksMessage } from '../lib/tweaks';
-import { applyTextEdits, reduceTextEditMessage, type TextEditCommit } from '../lib/textEdit';
+import {
+  applyTextEdits,
+  htmlScriptSources,
+  planTextEdits,
+  reduceTextEditMessage,
+  resolveScriptPath,
+  type ScriptFileContent,
+  type TextEditCommit,
+  type TextEditPlan,
+} from '../lib/textEdit';
 import {
   ExternalLinkIcon,
   MonitorIcon,
@@ -87,9 +96,10 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
   const [tweaksAvailable, setTweaksAvailable] = useState(false);
   const [tweaksOn, setTweaksOn] = useState(false);
   // 可视化文案编辑（设计 docs/superpowers/specs/2026-06-11-visual-text-edit-design.md）：
-  // 开关控制 iframe 内 bridge；提交经串行队列 readFile→applyTextEdits→putFile；
+  // 开关控制 iframe 内 bridge；提交经串行队列，先在 HTML 文本区域定位，未命中
+  // 再降级到脚本源码（内联脚本 + 本地 <script src>，覆盖 JSX/Babel 渲染文本）；
   // 编辑期间冻结外部 reloadKey（保存自身触发的 SSE 重载会丢滚动位置），退出时
-  // 再同步；撤销用提交前整文件快照 + localReload 重载。
+  // 再同步；撤销用提交前各受影响文件的快照组 + localReload 重载。
   const isHtmlFile = /\.html?$/i.test(file);
   const [textEditOn, setTextEditOn] = useState(false);
   const [textEditStatus, setTextEditStatus] = useState<{
@@ -99,7 +109,7 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
   const [undoCount, setUndoCount] = useState(0);
   const [frozenReloadKey, setFrozenReloadKey] = useState(reloadKey);
   const textEditOnRef = useRef(false);
-  const undoStackRef = useRef<string[]>([]);
+  const undoStackRef = useRef<ScriptFileContent[][]>([]);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const zoomMenuRef = useRef<HTMLDivElement | null>(null);
@@ -182,14 +192,59 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
         setTextEditStatus({ kind: 'saving' });
         try {
           const source = await api.readFile(projectId, file);
-          const next = applyTextEdits(source, commit.edits);
-          if (next === null) {
+          // 带插桩 loc 的提交必须走完整规划（loc 优先于 HTML 同名文本，且可能
+          // 指向外部脚本文件）；纯文本提交先试 HTML 文本区域的快路径。
+          const hasLoc = commit.edits.some((e) => e.loc);
+          const direct = hasLoc ? null : applyTextEdits(source, commit.edits);
+          let scripts: ScriptFileContent[] = [];
+          let plan: TextEditPlan;
+          if (direct !== null) {
+            plan = { ok: true, html: direct, files: [] };
+          } else {
+            // 拉取本地脚本源（内联脚本随 HTML 本体），定位脚本渲染文本。
+            const paths = [
+              ...new Set(
+                htmlScriptSources(source)
+                  .srcs.map((src) => resolveScriptPath(file, src))
+                  .filter((p): p is string => p !== null),
+              ),
+            ];
+            scripts = (
+              await Promise.all(
+                paths.map(async (path) => {
+                  try {
+                    return { path, content: await api.readFile(projectId, path) };
+                  } catch {
+                    return null;
+                  }
+                }),
+              )
+            ).filter((s): s is ScriptFileContent => s !== null);
+            plan = planTextEdits(source, scripts, commit.edits);
+          }
+          if (!plan.ok) {
             frame.postMessage({ type: 'pi:edit:result', id: commit.id, ok: false }, '*');
-            setTextEditStatus({ kind: 'error', message: '无法在源码中定位该文本（可能由脚本生成）' });
+            setTextEditStatus({
+              kind: 'error',
+              message:
+                plan.reason === 'ambiguous'
+                  ? '该文本在源码中出现多处，无法唯一定位'
+                  : plan.reason === 'unsafe'
+                    ? '新文本含可能破坏脚本语法的字符，未保存'
+                    : '无法在源码中定位该文本（可能由脚本动态拼接）',
+            });
             return;
           }
-          await api.putFile(projectId, file, next);
-          undoStackRef.current.push(source);
+          const writes: ScriptFileContent[] = [
+            ...(plan.html !== source ? [{ path: file, content: plan.html }] : []),
+            ...plan.files,
+          ];
+          const snapshot = writes.map((w) => ({
+            path: w.path,
+            content: w.path === file ? source : (scripts.find((s) => s.path === w.path)?.content ?? ''),
+          }));
+          for (const w of writes) await api.putFile(projectId, w.path, w.content);
+          undoStackRef.current.push(snapshot);
           if (undoStackRef.current.length > 50) undoStackRef.current.shift();
           setUndoCount(undoStackRef.current.length);
           frame.postMessage({ type: 'pi:edit:result', id: commit.id, ok: true }, '*');
@@ -210,14 +265,14 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
     saveQueueRef.current = saveQueueRef.current.then(async () => {
       setTextEditStatus({ kind: 'saving' });
       try {
-        await api.putFile(projectId, file, snapshot);
+        for (const f of snapshot) await api.putFile(projectId, f.path, f.content);
         setTextEditStatus({ kind: 'saved' });
         setLocalReload((v) => v + 1);
       } catch (err) {
         setTextEditStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
       }
     });
-  }, [projectId, file]);
+  }, [projectId]);
 
   const toggleTextEdit = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
