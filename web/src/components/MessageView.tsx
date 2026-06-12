@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { ChatMessage, ToolCall } from '../lib/types';
-import { BrainIcon, ChevronDownIcon, ChevronRightIcon, CircleCheckIcon, CircleXIcon, LoaderIcon, TriangleAlertIcon } from './icons';
+import { splitOnQuestionForms, stripTrailingOpenQuestionForm } from '../lib/questionForm';
+import { BrainIcon, ChevronDownIcon, ChevronRightIcon, CircleCheckIcon, CircleXIcon, ListTodoIcon, LoaderIcon, TriangleAlertIcon } from './icons';
 
 function ToolCallCard({ tool }: { tool: ToolCall }) {
   const [open, setOpen] = useState(false);
@@ -75,6 +76,41 @@ function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean 
   );
 }
 
+// 聊天里不直接渲染 <question-form> 原始标记（对齐参照：表单在 Questions 面板
+// 作答）：完整表单块替换为紧凑占位卡；流式中未闭合的表单截掉避免闪 JSON。
+function AssistantContent({ content, streaming }: { content: string; streaming?: boolean }) {
+  const { text, hadOpenForm } = stripTrailingOpenQuestionForm(content);
+  const segments = splitOnQuestionForms(text);
+  return (
+    <>
+      {segments.map((seg, i) =>
+        seg.kind === 'text' ? (
+          seg.text.trim() ? (
+            <div key={i} className="md">
+              <ReactMarkdown>{seg.text}</ReactMarkdown>
+            </div>
+          ) : null
+        ) : (
+          <div
+            key={i}
+            className="my-1.5 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600"
+          >
+            <ListTodoIcon size={14} className="shrink-0 text-zinc-400" />
+            <span className="min-w-0 truncate font-medium">{seg.form.title}</span>
+            <span className="ml-auto shrink-0 text-zinc-400">在右侧「问题」面板作答</span>
+          </div>
+        ),
+      )}
+      {hadOpenForm && streaming && (
+        <div className="my-1.5 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-400">
+          <LoaderIcon size={13} className="animate-spin" />
+          正在生成问题…
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function MessageView({ message }: { message: ChatMessage }) {
   if (message.role === 'user') {
     return (
@@ -90,11 +126,7 @@ export default function MessageView({ message }: { message: ChatMessage }) {
     <div className="max-w-full text-sm text-zinc-800">
       {message.thinking && <ThinkingBlock text={message.thinking} streaming={message.streaming} />}
       {message.tools?.map((tool, i) => <ToolCallCard key={tool.id ?? i} tool={tool} />)}
-      {message.content && (
-        <div className="md">
-          <ReactMarkdown>{message.content}</ReactMarkdown>
-        </div>
-      )}
+      {message.content && <AssistantContent content={message.content} streaming={message.streaming} />}
       {message.streaming && !message.content && !message.thinking && (
         <p className="animate-pulse text-zinc-400">思考中…</p>
       )}

@@ -29,8 +29,18 @@ type Props = {
   routeFileName: string | null;
   /** 活动预览文件变化 → 上层同步进 URL(必须传稳定引用 useCallback)。 */
   onActiveFileChange?: (file: string | null) => void;
-  /** 最后一条助手消息派生的问题表单;非空时显示 Questions 标签。 */
+  /** 活动问题表单（最终或流式预览）;非空时显示 Questions 标签。 */
   questionForm?: QuestionForm | null;
+  /** 表单 occurrence 稳定 key（逐题 reveal 只播一次）。 */
+  questionFormKey?: string | null;
+  /** 表单是否可交互（最新且未回答）。 */
+  questionFormInteractive?: boolean;
+  /** 回合进行中:表单保持可编辑但禁止提交。 */
+  questionFormSubmitDisabled?: boolean;
+  /** 已提交答案（锁定态回填）。 */
+  questionFormSubmittedAnswers?: Record<string, string | string[]>;
+  /** 表单仍在流式生成中。 */
+  questionsGenerating?: boolean;
   /** Questions 提交 → 发送到对话。 */
   onSubmitQuestions?: (text: string) => void;
 };
@@ -58,7 +68,7 @@ function loadTabState(projectId: string): TabState {
  * open files above the FileViewer, a files-panel toggle, live-reload via SSE,
  * and "artifact appears → its tab opens" behavior.
  */
-export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated, focusMode, onFocusModeChange, interactionDisabled, routeFileName, onActiveFileChange, questionForm, onSubmitQuestions }: Props) {
+export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated, focusMode, onFocusModeChange, interactionDisabled, routeFileName, onActiveFileChange, questionForm, questionFormKey, questionFormInteractive, questionFormSubmitDisabled, questionFormSubmittedAnswers, questionsGenerating, onSubmitQuestions }: Props) {
   const [{ tabs, active }, setTabState] = useState<TabState>(() => loadTabState(projectId));
   const [showFiles, setShowFiles] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -116,10 +126,13 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
     onActiveFileChange?.(showFiles || showQuestions ? null : active);
   }, [active, showFiles, showQuestions, onActiveFileChange]);
 
-  // 新表单出现自动切到 Questions 标签(对齐参照行为);表单消失自动退出。
+  // 新表单 occurrence 出现自动切到 Questions 标签(对齐参照行为);表单消失
+  // (已回答/新回合)自动退出。按 questionFormKey 触发——key 在整个流式期间
+  // 稳定,用户中途切走不会被反复拉回。
   useEffect(() => {
-    setShowQuestions(!!questionForm);
-  }, [questionForm]);
+    setShowQuestions(Boolean(questionFormKey && questionForm));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionFormKey]);
 
   const closeTab = useCallback((path: string) => {
     setTabState((prev) => {
@@ -270,7 +283,15 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
       </div>
       <div className={`relative min-h-0 flex-1 bg-white ${interactionDisabled ? 'pointer-events-none select-none' : ''}`}>
         {showQuestions && questionForm ? (
-          <QuestionsPanel form={questionForm} onSubmit={(text) => onSubmitQuestions?.(text)} />
+          <QuestionsPanel
+            form={questionForm}
+            formKey={questionFormKey ?? null}
+            interactive={questionFormInteractive ?? false}
+            submitDisabled={questionFormSubmitDisabled ?? false}
+            submittedAnswers={questionFormSubmittedAnswers}
+            generating={questionsGenerating ?? false}
+            onSubmit={(text) => onSubmitQuestions?.(text)}
+          />
         ) : showFiles ? (
           <FilesPanel
             projectId={projectId}

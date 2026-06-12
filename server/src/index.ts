@@ -33,6 +33,7 @@ import {
 } from './conversations.js';
 import { importClaudeDesignZip } from './claude-design-import.js';
 import { parseCreateProjectBody } from './project-create.js';
+import { designAppendPrompts } from './prompts/compose.js';
 import { enabledSkillPaths } from './pi-skills.js';
 import { runningProjectIds } from './running.js';
 import { registerPiRoutes } from './pi-routes.js';
@@ -76,7 +77,9 @@ const sessionKey = (projectId: string, cid: string) => `${projectId}:${cid}`;
 
 function launchConfigFor(id: string): SessionLaunchConfig {
   const meta = getProject(id);
-  const appendPrompts: string[] = [];
+  // 设计链路提示栈（locale → discovery 主导层 → 项目元数据块），对齐参照
+  // composeSystemPrompt 的栈序；全局/项目自定义指令拼在其后。
+  const appendPrompts: string[] = designAppendPrompts(meta?.metadata);
   const globalInstructions = readWebuiSettings().instructions?.trim();
   if (globalInstructions) appendPrompts.push(globalInstructions);
   const projectInstructions = meta?.instructions?.trim();

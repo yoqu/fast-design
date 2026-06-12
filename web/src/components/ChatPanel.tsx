@@ -27,10 +27,11 @@ type Props = {
   /** 注册外部发送函数(QuestionsPanel 提交答案用)。 */
   sendRef?: MutableRefObject<((text: string) => void) | null>;
   /**
-   * 回合结束/历史加载后,把最后一条助手消息全文回调给上层(派生 question-form)。
-   * 必须传稳定引用(useCallback),否则历史加载 effect 会反复重跑。
+   * 消息列表变化回调（含流式逐 delta 更新），上层据此派生 question-form
+   * 状态（活动表单/已提交答案/流式预览，对齐参照 ProjectView 的派生方式）。
+   * 必须传稳定引用(useCallback)。
    */
-  onAssistantText?: (text: string) => void;
+  onMessages?: (messages: ChatMessage[]) => void;
   /** 项目的待发提示词；非空时预填 composer 并触发 onConsumePendingPrompt。 */
   pendingPrompt?: string | null;
   /** 预填后清除持久化 pendingPrompt（PATCH null）。 */
@@ -47,7 +48,7 @@ function writtenFileFrom(name: string | null, input: unknown): string | null {
   return typeof candidate === 'string' && candidate ? candidate.split('/').pop() ?? null : null;
 }
 
-export default function ChatPanel({ projectId, conversationId, conversations, projectName, onBack, onSelectConversation, onCreateConversation, onRenameConversation, onDeleteConversation, onGeneration, retryRef, sendRef, onAssistantText, pendingPrompt, onConsumePendingPrompt }: Props) {
+export default function ChatPanel({ projectId, conversationId, conversations, projectName, onBack, onSelectConversation, onCreateConversation, onRenameConversation, onDeleteConversation, onGeneration, retryRef, sendRef, onMessages, pendingPrompt, onConsumePendingPrompt }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -63,9 +64,6 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
     turnEnded: false,
   });
   const lastUserText = useRef<string | null>(null);
-  // 本回合流式累积的助手正文;turn 结束后回调 onAssistantText(不能在
-  // setMessages updater 内做——updater 必须纯,StrictMode 会双执行。
-  const liveAssistantText = useRef('');
   // 当前回合的流式请求控制器：卸载（切换会话/项目）时中断读流，
   // 防止旧回合的 finally 把共享的 generation 状态写给新会话。
   const streamAbort = useRef<AbortController | null>(null);
@@ -107,10 +105,13 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
     onGeneration?.(deriveGenerationModel(generationInput.current));
     api.history(projectId, conversationId).then((msgs) => {
       setMessages(msgs);
-      const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant');
-      if (lastAssistant) onAssistantText?.(lastAssistant.content);
     }).catch(() => setMessages([]));
-  }, [projectId, conversationId, onGeneration, onAssistantText]);
+  }, [projectId, conversationId, onGeneration]);
+
+  // 消息变化（含流式逐 delta）上报给上层派生问卷状态。
+  useEffect(() => {
+    onMessages?.(messages);
+  }, [messages, onMessages]);
 
   useEffect(() => {
     if (stickToBottom.current) {
@@ -131,7 +132,6 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
       setBusy(true);
       setStatus('连接中');
       lastUserText.current = text;
-      liveAssistantText.current = '';
       pushGeneration({
         busy: true,
         aborted: false,
@@ -153,7 +153,6 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
             setStatus(ev.label);
             break;
           case 'text_delta':
-            liveAssistantText.current += ev.delta;
             updateLast((m) => ({ ...m, content: m.content + ev.delta }));
             pushGeneration({ sawDelta: true, lastActivity: ev.delta });
             break;
@@ -205,7 +204,6 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
           setMessages((prev) =>
             prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
           );
-          if (liveAssistantText.current) onAssistantText?.(liveAssistantText.current);
           setBusy(false);
           setStatus(null);
           pushGeneration({ busy: false, turnEnded: true });
@@ -213,7 +211,7 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
         if (streamAbort.current === controller) streamAbort.current = null;
       }
     },
-    [projectId, conversationId, updateLast, pushGeneration, onAssistantText],
+    [projectId, conversationId, updateLast, pushGeneration],
   );
 
   useEffect(() => {

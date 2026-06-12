@@ -11,9 +11,15 @@ import {
   saveChatPanelWidth,
 } from '../lib/chatPanelWidth';
 import { deriveGenerationModel, type GenerationModel } from '../lib/generation';
-import { extractQuestionForm, type QuestionForm } from '../lib/questionForm';
+import {
+  findFirstQuestionForm,
+  hasUnterminatedQuestionForm,
+  parsePartialQuestionForm,
+  type QuestionForm,
+} from '../lib/questionForm';
+import { parseSubmittedAnswers } from './QuestionForm';
 import { navigate } from '../router';
-import type { ConversationSummary, ProjectMeta } from '../lib/types';
+import type { ChatMessage, ConversationSummary, ProjectMeta } from '../lib/types';
 import ChatPanel from './ChatPanel';
 import { Workspace } from './Workspace';
 import { ArrowLeftIcon } from './icons';
@@ -45,7 +51,7 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [generation, setGeneration] = useState<GenerationModel>(IDLE_GENERATION);
-  const [questionForm, setQuestionForm] = useState<QuestionForm | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [workspaceFocused, setWorkspaceFocused] = useState(false);
   const retryRef = useRef<(() => void) | null>(null);
   const sendRef = useRef<((text: string) => void) | null>(null);
@@ -139,7 +145,6 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
 
   const createConversation = useCallback(async () => {
     const conv = await api.createConversation(projectId);
-    setQuestionForm(null);
     await loadConversations(conv.id);
   }, [projectId, loadConversations]);
 
@@ -175,9 +180,59 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
     }
   }, [projectId]);
 
-  const handleAssistantText = useCallback((text: string) => {
-    setQuestionForm(extractQuestionForm(text));
+  const handleMessages = useCallback((msgs: ChatMessage[]) => {
+    setMessages(msgs);
   }, []);
+
+  // ---- 问卷派生（对齐参照 ProjectView.tsx:1086-1150）----
+  // 表单取自最后一条助手消息；仅当它是最新回合且用户尚未回答时可交互
+  // （回答以后续 "[form answers …]" 用户消息出现）。
+  const lastAssistantIndex = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === 'assistant') return i;
+    }
+    return -1;
+  }, [messages]);
+  const lastAssistantContent =
+    lastAssistantIndex >= 0 ? messages[lastAssistantIndex]?.content ?? '' : '';
+  const questionForm: QuestionForm | null = useMemo(
+    () => findFirstQuestionForm(lastAssistantContent)?.form ?? null,
+    [lastAssistantContent],
+  );
+  const questionFormSubmittedAnswers = useMemo(() => {
+    if (!questionForm) return undefined;
+    for (let i = lastAssistantIndex + 1; i < messages.length; i++) {
+      const m = messages[i];
+      if (m?.role !== 'user') continue;
+      const parsed = parseSubmittedAnswers(questionForm, m.content ?? '');
+      if (parsed) return parsed;
+    }
+    return undefined;
+  }, [questionForm, lastAssistantIndex, messages]);
+  const conversationStreaming = generation.phase === 'generating';
+  const questionsGenerating =
+    conversationStreaming && hasUnterminatedQuestionForm(lastAssistantContent);
+  // While the form is still streaming, parse it tolerantly so the Questions tab
+  // can show a frame (title) immediately and fill questions in as they arrive.
+  const questionFormPreview = useMemo(
+    () => (questionsGenerating ? parsePartialQuestionForm(lastAssistantContent) : null),
+    [questionsGenerating, lastAssistantContent],
+  );
+  // The active (latest, unanswered) form stays editable the whole time it's on
+  // screen — while it streams in AND while the turn is still busy — so it never
+  // flickers between the locked and interactive styles. Submission is gated
+  // separately by the panel via submitDisabled/generating.
+  const questionFormActive =
+    (!!questionForm || questionsGenerating) && questionFormSubmittedAnswers === undefined;
+  const hasQuestions =
+    Boolean(questionForm || questionsGenerating) && questionFormSubmittedAnswers === undefined;
+  // 表单 occurrence 的稳定 key（reveal 动画只播一次）。参照按助手消息 id；
+  // 本应用消息无 id，用消息下标（流式期间与重载后均稳定）替代。
+  const displayedQuestionForm = hasQuestions ? questionForm ?? questionFormPreview : null;
+  const questionFormKey =
+    activeConversationId && lastAssistantIndex >= 0 && displayedQuestionForm
+      ? `${activeConversationId}:${lastAssistantIndex}`
+      : null;
 
   // ---- 拖拽手柄事件 ----
   const handleResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -268,10 +323,27 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
       interactionDisabled: resizing,
       routeFileName,
       onActiveFileChange: handleActiveFileChange,
-      questionForm,
+      questionForm: displayedQuestionForm,
+      questionFormKey,
+      questionFormInteractive: questionFormActive,
+      questionFormSubmitDisabled: conversationStreaming,
+      questionFormSubmittedAnswers,
+      questionsGenerating,
       onSubmitQuestions: handleSubmitQuestions,
     }),
-    [workspaceFocused, resizing, routeFileName, handleActiveFileChange, questionForm, handleSubmitQuestions],
+    [
+      workspaceFocused,
+      resizing,
+      routeFileName,
+      handleActiveFileChange,
+      displayedQuestionForm,
+      questionFormKey,
+      questionFormActive,
+      conversationStreaming,
+      questionFormSubmittedAnswers,
+      questionsGenerating,
+      handleSubmitQuestions,
+    ],
   );
 
   if (error) {
@@ -305,7 +377,7 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
               onGeneration={setGeneration}
               retryRef={retryRef}
               sendRef={sendRef}
-              onAssistantText={handleAssistantText}
+              onMessages={handleMessages}
               pendingPrompt={meta?.pendingPrompt ?? null}
               onConsumePendingPrompt={consumePendingPrompt}
             />
