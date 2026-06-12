@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { sortProjects } from '../lib/projectsList';
 import type { ProjectMeta } from '../lib/types';
 import ProjectCard from './ProjectCard';
+import AttachmentPicker from './AttachmentPicker';
 import { ArrowRightIcon } from './icons';
 
 type Props = {
@@ -10,8 +11,8 @@ type Props = {
   onOpen: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
-  /** Hero 提交:用 prompt 建项目(pendingPrompt 语义,预填不自动发)。 */
-  onCreateFromPrompt: (prompt: string) => Promise<void>;
+  /** Hero 提交:用 prompt + 附件建项目(pendingPrompt 语义,预填不自动发)。 */
+  onCreateFromPrompt: (prompt: string, files: File[]) => Promise<void>;
   /** 打开新建/导入面板。 */
   onNewProject: () => void;
   onViewAll: () => void;
@@ -23,17 +24,18 @@ type Props = {
  */
 export default function HomeView({ projects, onOpen, onRename, onDelete, onCreateFromPrompt, onNewProject, onViewAll }: Props) {
   const [prompt, setPrompt] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recent = sortProjects(projects, 'recent').slice(0, 6);
 
   const submit = async () => {
     const text = prompt.trim();
-    if (!text || creating) return;
+    if ((!text && files.length === 0) || creating) return;
     setCreating(true);
     setError(null);
     try {
-      await onCreateFromPrompt(text);
+      await onCreateFromPrompt(text, files);
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建失败');
     } finally {
@@ -55,18 +57,38 @@ export default function HomeView({ projects, onOpen, onRename, onDelete, onCreat
                 void submit();
               }
             }}
+            onPaste={(e) => {
+              const pasted = Array.from(e.clipboardData.items)
+                .filter((item) => item.kind === 'file')
+                .map((item) => item.getAsFile())
+                .filter((f): f is File => !!f);
+              if (pasted.length > 0) {
+                e.preventDefault();
+                setFiles((prev) => [...prev, ...pasted]);
+              }
+            }}
             rows={3}
             placeholder="描述你想做的网页,比如「做一个咖啡店落地页」…"
             className="w-full resize-none bg-transparent px-1 text-sm outline-none"
             aria-label="项目需求描述"
           />
+          {files.length > 0 && (
+            <div className="px-1 pb-1">
+              <AttachmentPicker files={files} onChange={setFiles} disabled={creating} addLabel="继续添加" />
+            </div>
+          )}
           <div className="flex items-center justify-between pt-1">
-            <button type="button" onClick={onNewProject} className="rounded-lg px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100">
-              更多选项 / 导入现有项目
-            </button>
+            <div className="flex items-center gap-1">
+              {files.length === 0 && (
+                <AttachmentPicker files={files} onChange={setFiles} disabled={creating} addLabel="附件" />
+              )}
+              <button type="button" onClick={onNewProject} className="rounded-lg px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100">
+                更多选项 / 导入现有项目
+              </button>
+            </div>
             <button
               type="button"
-              disabled={!prompt.trim() || creating}
+              disabled={(!prompt.trim() && files.length === 0) || creating}
               onClick={() => void submit()}
               className="rounded-lg bg-zinc-900 px-4 py-1.5 text-sm text-white disabled:opacity-40"
             >

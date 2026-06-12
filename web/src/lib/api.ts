@@ -1,4 +1,4 @@
-import type { ChatMessage, ConversationMeta, ConversationSummary, CustomModel, CustomProvider, ExtensionInfo, ExtensionOpResult, FileEntry, HandoffInfo, PiModel, PiSettings, PiStatus, ProjectMeta, ProvidersResponse, SkillInfo, UiEvent } from './types';
+import type { ChatAttachment, ChatMessage, ConversationMeta, ConversationSummary, CustomModel, CustomProvider, ExtensionInfo, ExtensionOpResult, FileEntry, HandoffInfo, PiModel, PiSettings, PiStatus, ProjectMeta, ProvidersResponse, SkillInfo, UiEvent } from './types';
 import type { PreviewUrlResponse, ProjectArtifact } from './artifacts';
 import type { CreateProjectRequest } from './newProject';
 
@@ -37,6 +37,7 @@ export const api = {
       instructions?: string | null;
       skillId?: string | null;
       pendingPrompt?: string | null;
+      pendingAttachments?: ChatAttachment[] | null;
     },
   ) =>
     fetch(`/api/projects/${id}`, {
@@ -77,6 +78,15 @@ export const api = {
     })
       .then((r) => json<{ conversation: ConversationMeta }>(r))
       .then((b) => b.conversation),
+  /** 设置会话级模型覆盖；null = 跟随项目设置。服务端会重启该会话的空闲 pi 进程。 */
+  setConversationModel: (id: string, cid: string, model: string | null) =>
+    fetch(`/api/projects/${id}/conversations/${cid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    })
+      .then((r) => json<{ conversation: ConversationMeta }>(r))
+      .then((b) => b.conversation),
   history: (id: string, cid: string) =>
     fetch(`/api/projects/${id}/conversations/${cid}/history`).then((r) => json<ChatMessage[]>(r)),
   files: (id: string) => fetch(`/api/projects/${id}/files`).then((r) => json<FileEntry[]>(r)),
@@ -102,6 +112,13 @@ export const api = {
       headers: { 'Content-Type': 'application/octet-stream' },
       body,
     }).then((r) => json<{ ok: boolean }>(r)),
+  /** 把聊天附件写入项目 uploads/ 目录（agent cwd 内，可直接读取），返回可随消息发送的元数据。 */
+  uploadAttachment: async (id: string, file: File): Promise<ChatAttachment> => {
+    const safeName = (file.name || 'attachment').replace(/[/\\]/g, '_').replace(/\s+/g, '_');
+    const path = `uploads/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}-${safeName}`;
+    await api.putFile(id, path, file, false);
+    return { name: file.name || safeName, path, mimeType: file.type || 'application/octet-stream', size: file.size };
+  },
   deleteFile: async (id: string, path: string): Promise<void> => {
     const res = await fetch(`/api/projects/${id}/file?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
     if (!res.ok && res.status !== 204) {
@@ -145,11 +162,12 @@ export async function streamChat(
   message: string,
   onEvent: (ev: UiEvent) => void,
   signal?: AbortSignal,
+  attachments?: ChatAttachment[],
 ): Promise<void> {
   const res = await fetch(`/api/projects/${projectId}/conversations/${conversationId}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, ...(attachments?.length ? { attachments } : {}) }),
     signal,
   });
   if (!res.ok || !res.body) {

@@ -8,6 +8,8 @@ import type { ChatMessage } from './types.js';
 export type ConversationMeta = {
   id: string;
   title: string | null;
+  /** 会话级模型覆盖（provider/id）；null/缺省 = 跟随项目设置。 */
+  model?: string | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -148,7 +150,7 @@ export function createConversation(projectId: string, title?: string | null): Co
 export function updateConversation(
   projectId: string,
   cid: string,
-  patch: { title?: string | null },
+  patch: { title?: string | null; model?: string | null },
 ): ConversationMeta | null {
   const list = ensureConversations(projectId);
   const idx = list.findIndex((c) => c.id === cid);
@@ -156,6 +158,9 @@ export function updateConversation(
   const next = { ...list[idx], updatedAt: Date.now() };
   if (patch.title !== undefined) {
     next.title = typeof patch.title === 'string' && patch.title.trim() ? patch.title.trim() : null;
+  }
+  if (patch.model !== undefined) {
+    next.model = typeof patch.model === 'string' && patch.model.trim() ? patch.model.trim() : null;
   }
   list[idx] = next;
   writeIndex(projectId, list);

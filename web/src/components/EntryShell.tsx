@@ -52,12 +52,21 @@ export default function EntryShell({ view }: Props) {
   const openProject = (id: string) =>
     navigate({ kind: 'project', projectId: id, conversationId: null, fileName: null });
 
-  const createProject = async (input: CreateProjectRequest) => {
+  const createProject = async (input: CreateProjectRequest, files: File[] = []) => {
     const meta = await api.createProject(input);
+    if (files.length > 0) {
+      // 简报里选的附件：项目建好后统一上传，成功的写入 pendingAttachments
+      // 随 pendingPrompt 一起预填到对话输入框；个别失败的静默跳过。
+      const results = await Promise.allSettled(files.map((f) => api.uploadAttachment(meta.id, f)));
+      const uploaded = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+      if (uploaded.length > 0) {
+        await api.updateProject(meta.id, { pendingAttachments: uploaded }).catch(() => {});
+      }
+    }
     openProject(meta.id);
   };
 
-  const createFromPrompt = async (prompt: string) => {
+  const createFromPrompt = async (prompt: string, files: File[] = []) => {
     await createProject(
       buildCreateRequest({
         name: '',
@@ -68,6 +77,7 @@ export default function EntryShell({ view }: Props) {
         includeLandingPage: false,
         includeOsWidgets: false,
       }),
+      files,
     );
   };
 

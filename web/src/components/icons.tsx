@@ -317,3 +317,28 @@ export const BrainIcon = createIcon(
   </>,
   'BrainIcon',
 );
+
+// 回形针（添加附件）
+export const PaperclipIcon = createIcon(
+  <path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485L21 12" />,
+  'PaperclipIcon',
+);
+
+// 文件（通用附件）
+export const FileIcon = createIcon(
+  <>
+    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+    <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+  </>,
+  'FileIcon',
+);
+
+// 图片
+export const ImageIcon = createIcon(
+  <>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="9" cy="9" r="2" />
+    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+  </>,
+  'ImageIcon',
+);

@@ -171,10 +171,18 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
     [projectId, loadConversations],
   );
 
+  const setConversationModel = useCallback(
+    async (cid: string, model: string | null) => {
+      await api.setConversationModel(projectId, cid, model);
+      await loadConversations();
+    },
+    [projectId, loadConversations],
+  );
+
   const consumePendingPrompt = useCallback(async () => {
-    setMeta((m) => (m ? { ...m, pendingPrompt: null } : m));
+    setMeta((m) => (m ? { ...m, pendingPrompt: null, pendingAttachments: null } : m));
     try {
-      await api.updateProject(projectId, { pendingPrompt: null });
+      await api.updateProject(projectId, { pendingPrompt: null, pendingAttachments: null });
     } catch {
       // 忽略:下次进入最多再预填一次,无害。
     }
@@ -374,11 +382,14 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
               onCreateConversation={() => void createConversation()}
               onRenameConversation={(cid, title) => void renameConversation(cid, title)}
               onDeleteConversation={(cid) => void deleteConversation(cid)}
+              projectModel={meta?.model ?? null}
+              onSetConversationModel={(cid, model) => void setConversationModel(cid, model)}
               onGeneration={setGeneration}
               retryRef={retryRef}
               sendRef={sendRef}
               onMessages={handleMessages}
               pendingPrompt={meta?.pendingPrompt ?? null}
+              pendingAttachments={meta?.pendingAttachments ?? null}
               onConsumePendingPrompt={consumePendingPrompt}
             />
           ) : (

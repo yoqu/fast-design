@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { ProjectMeta, ProjectMetadata } from './types.js';
+import type { ChatAttachment, ProjectMeta, ProjectMetadata } from './types.js';
 
 export const DATA_ROOT = process.env.PI_WEBUI_DATA
   ? path.resolve(process.env.PI_WEBUI_DATA)
@@ -93,6 +93,7 @@ export type ProjectMetaPatch = {
   instructions?: string | null;
   skillId?: string | null;
   pendingPrompt?: string | null;
+  pendingAttachments?: ChatAttachment[] | null;
 };
 
 /** 部分更新项目 meta；undefined 字段不动，null 表示清除；name 仅接受非空字符串。 */
@@ -103,6 +104,7 @@ export function updateProject(id: string, patch: ProjectMetaPatch): ProjectMeta 
   for (const key of ['model', 'thinking', 'instructions', 'skillId', 'pendingPrompt'] as const) {
     if (patch[key] !== undefined) next[key] = patch[key];
   }
+  if (patch.pendingAttachments !== undefined) next.pendingAttachments = patch.pendingAttachments;
   if (typeof patch.name === 'string' && patch.name.trim()) next.name = patch.name.trim();
   next.updatedAt = Date.now();
   fs.writeFileSync(metaPath(id), JSON.stringify(next, null, 2));

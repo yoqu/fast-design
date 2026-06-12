@@ -2,10 +2,11 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { piApi } from '../lib/api';
 import type { PiModel, ProjectFidelity, ProjectPlatform } from '../lib/types';
 import { autoName, buildCreateRequest, DESIGN_PLATFORMS, type CreateProjectRequest } from '../lib/newProject';
+import AttachmentPicker from './AttachmentPicker';
 
 type Props = {
   onClose: () => void;
-  onCreate: (input: CreateProjectRequest) => Promise<void>;
+  onCreate: (input: CreateProjectRequest, files?: File[]) => Promise<void>;
   onImportClaudeDesign?: (file: File) => Promise<void>;
 };
 
@@ -18,6 +19,7 @@ type Props = {
 export default function NewProjectPanel({ onClose, onCreate, onImportClaudeDesign }: Props) {
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
   const [model, setModel] = useState('');
   const [models, setModels] = useState<PiModel[]>([]);
   const [platforms, setPlatforms] = useState<ProjectPlatform[]>(['responsive']);
@@ -58,6 +60,7 @@ export default function NewProjectPanel({ onClose, onCreate, onImportClaudeDesig
           includeLandingPage,
           includeOsWidgets,
         }),
+        files,
       );
       onClose();
     } catch (err) {
@@ -107,6 +110,11 @@ export default function NewProjectPanel({ onClose, onCreate, onImportClaudeDesig
           placeholder="描述你想做的界面，比如「做一个咖啡店落地页」"
           className="mt-1 w-full resize-none rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
         />
+
+        <label className="mt-3 block text-xs font-medium text-zinc-500">附件（可选，创建后随提示词一起带入对话）</label>
+        <div className="mt-1 space-y-1.5">
+          <AttachmentPicker files={files} onChange={setFiles} disabled={submitting} addLabel="添加附件" />
+        </div>
 
         <label className="mt-3 block text-xs font-medium text-zinc-500">目标平台</label>
         <div className="mt-1 grid grid-cols-3 gap-1.5">

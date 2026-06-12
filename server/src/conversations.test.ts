@@ -80,6 +80,25 @@ describe('CRUD + ordering', () => {
     expect(getConversation(id, second.id)!.title).toBe('正式稿');
   });
 
+  it('sets, persists and clears the per-conversation model override', async () => {
+    const id = makeProject('conv-model');
+    const [conv] = await listConversations(id);
+    expect(conv.model ?? null).toBeNull();
+
+    const set = updateConversation(id, conv.id, { model: '  anthropic/claude-sonnet-4-6  ' })!;
+    expect(set.model).toBe('anthropic/claude-sonnet-4-6');
+    expect(getConversation(id, conv.id)!.model).toBe('anthropic/claude-sonnet-4-6');
+
+    // 只改 title 不动 model
+    updateConversation(id, conv.id, { title: '改名' });
+    expect(getConversation(id, conv.id)!.model).toBe('anthropic/claude-sonnet-4-6');
+
+    // null/空串 = 清除覆盖，恢复跟随项目设置
+    const cleared = updateConversation(id, conv.id, { model: null })!;
+    expect(cleared.model).toBeNull();
+    expect(updateConversation(id, conv.id, { model: '   ' })!.model).toBeNull();
+  });
+
   it('append bumps conversation and project updatedAt', async () => {
     const id = makeProject('conv-bump');
     const [conv] = await listConversations(id);
