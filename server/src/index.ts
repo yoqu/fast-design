@@ -37,6 +37,7 @@ import { parseCreateProjectBody } from './project-create.js';
 import { designAppendPrompts } from './prompts/compose.js';
 import { enabledSkillPaths } from './pi-skills.js';
 import { runningProjectIds } from './running.js';
+import { activeTurn, recoverInterruptedTurns, removeTurnJournal, startTurn } from './turns.js';
 import { registerPiRoutes } from './pi-routes.js';
 import { readWebuiSettings } from './webui-settings.js';
 import { closeProjectWatcher, watchProject } from './watch.js';
@@ -50,7 +51,6 @@ import {
   wantsTextEditBridge,
 } from './bridges.js';
 import { detectEditors, openInEditor, revealDir } from './handoff.js';
-import type { ChatMessage, ToolCall, UiEvent } from './types.js';
 
 const PORT = Number(process.env.PORT) || 4400;
 const app = express();
@@ -220,6 +220,7 @@ app.delete('/api/projects/:id/conversations/:cid', (req, res) => {
   const key = sessionKey(id, cid);
   sessions.get(key)?.dispose();
   sessions.delete(key);
+  removeTurnJournal(id, cid);
   if (!deleteConversation(id, cid)) return res.status(404).json({ error: 'conversation not found' });
   res.json({ ok: true });
 });
@@ -245,7 +246,9 @@ app.post('/api/projects/:id/conversations/:cid/chat', async (req, res) => {
   if (!message && attachments.length === 0) return res.status(400).json({ error: 'message is required' });
 
   const session = sessionFor(id, cid);
-  if (session.isBusy) return res.status(409).json({ error: 'agent 正忙，请先停止当前回合' });
+  if (session.isBusy || activeTurn(id, cid)) {
+    return res.status(409).json({ error: 'agent 正忙，请先停止当前回合' });
+  }
 
   res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache');
@@ -258,59 +261,36 @@ app.post('/api/projects/:id/conversations/:cid/chat', async (req, res) => {
     createdAt: Date.now(),
   });
 
-  // Accumulate the assistant turn so it can be persisted once finished.
-  const assistant: ChatMessage = { role: 'assistant', content: '', createdAt: Date.now() };
-  const tools: ToolCall[] = [];
-  // 回合检查点：pi 自动重试会把出错回合整个重发，回滚到检查点避免半截输出重复入档。
-  const checkpoint = { content: 0, thinking: 0 };
-
-  const emit = (ev: UiEvent) => {
-    switch (ev.type) {
-      case 'turn_start':
-        checkpoint.content = assistant.content.length;
-        checkpoint.thinking = assistant.thinking?.length ?? 0;
-        break;
-      case 'retry':
-        assistant.content = assistant.content.slice(0, checkpoint.content);
-        if (assistant.thinking !== undefined) {
-          assistant.thinking = assistant.thinking.slice(0, checkpoint.thinking);
-        }
-        delete assistant.error;
-        break;
-      case 'text_delta':
-        assistant.content += ev.delta;
-        break;
-      case 'thinking_delta':
-        assistant.thinking = (assistant.thinking ?? '') + ev.delta;
-        break;
-      case 'tool_use':
-        tools.push({ id: ev.id, name: ev.name, input: ev.input });
-        break;
-      case 'tool_result': {
-        const call = tools.find((t) => t.id === ev.toolUseId && t.result === undefined) ?? tools.at(-1);
-        if (call) {
-          call.result = ev.content.length > 4000 ? `${ev.content.slice(0, 4000)}\n…(截断)` : ev.content;
-          call.isError = ev.isError;
-        }
-        break;
-      }
-      case 'error':
-        assistant.error = ev.message;
-        break;
-    }
+  // 回合与连接解耦：本响应只是第一个订阅者。客户端断开仅退订、不再 abort，
+  // 回合后台跑完并由 startTurn 统一折叠落盘（spec: 2026-06-12-turn-resume）。
+  const { turn, finished } = startTurn(id, cid, (emit) =>
+    session.prompt(composePromptWithAttachments(message, attachments), emit),
+  );
+  const unsubscribe = turn.subscribe((ev) => {
     res.write(`${JSON.stringify(ev)}\n`);
-  };
-
-  req.on('close', () => {
-    // Client went away mid-turn: stop the agent so it doesn't burn tokens.
-    if (session.isBusy) session.abort();
   });
-
-  await session.prompt(composePromptWithAttachments(message, attachments), emit);
-  if (tools.length > 0) assistant.tools = tools;
-  appendConversationHistory(id, cid, assistant);
-  res.write(`${JSON.stringify({ type: 'done' } satisfies UiEvent)}\n`);
+  req.on('close', unsubscribe);
+  await finished;
   res.end();
+});
+
+// 续接进行中的回合：回放已缓冲事件并实时续流，结尾 done；空闲返回 204。
+// 多订阅者互不影响（多标签页可同时观看）。
+app.get('/api/projects/:id/conversations/:cid/chat/stream', (req, res) => {
+  const { id, cid } = req.params;
+  if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
+  if (!getConversation(id, cid)) return res.status(404).json({ error: 'conversation not found' });
+  const turn = activeTurn(id, cid);
+  if (!turn) return res.status(204).end();
+
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.flushHeaders();
+  const unsubscribe = turn.subscribe((ev) => {
+    res.write(`${JSON.stringify(ev)}\n`);
+    if (ev.type === 'done') res.end();
+  });
+  req.on('close', unsubscribe);
 });
 
 app.get('/api/projects/:id/files', (req, res) => {
@@ -606,6 +586,9 @@ app.get('/api/projects/:id/export', (req, res) => {
 });
 
 registerPiRoutes(app, { disposeIdleSessions });
+
+// server 重启后：把上次进程死于中途的回合折叠进历史并标记中断。
+recoverInterruptedTurns();
 
 app.listen(PORT, () => {
   console.log(`pi-web-studio server: http://localhost:${PORT}`);
