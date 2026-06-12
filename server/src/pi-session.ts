@@ -142,7 +142,16 @@ export class PiSession {
     }
     if (raw.type === 'response') {
       if (raw.id === this.promptRpcId && raw.success === false) {
-        this.failTurn(`prompt 被拒绝: ${String(raw.error ?? 'unknown')}`);
+        const reason = String(raw.error ?? 'unknown');
+        // 状态分叉兜底：webui 认为空闲但 pi 内部仍在流式（如自动重试的续跑），
+        // 发 abort 让 pi 复位（abort 同时取消重试退避与运行中的 run），
+        // 否则该会话在 pi 退出前会一直拒绝所有 prompt。
+        if (/already processing/i.test(reason)) {
+          this.writeRpc({ type: 'abort' });
+          this.failTurn('pi 仍在处理上一回合，已自动复位，请重新发送');
+          return;
+        }
+        this.failTurn(`prompt 被拒绝: ${reason}`);
       }
       return;
     }
@@ -193,15 +202,22 @@ export class PiSession {
     });
   }
 
-  abort(): void {
+  /** 向存活的 pi 子进程发一条 RPC；stdin 已断则直接终止进程。 */
+  private writeRpc(payload: JsonRecord): void {
     const child = this.child;
-    if (!child || !this.busy) return;
+    if (!child) return;
     const id = this.nextRpcId++;
     try {
-      child.stdin!.write(`${JSON.stringify({ id, type: 'abort' })}\n`);
+      child.stdin!.write(`${JSON.stringify({ id, ...payload })}\n`);
     } catch {
       child.kill('SIGTERM');
     }
+  }
+
+  // 不检查 busy：webui 与 pi 的忙闲可能分叉（pi 自动重试期间 webui 已收尾），
+  // 让「停止」始终可作为恢复手段；pi 空闲时 abort 是无害 no-op。
+  abort(): void {
+    this.writeRpc({ type: 'abort' });
   }
 
   dispose(): void {

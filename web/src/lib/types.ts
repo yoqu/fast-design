@@ -1,5 +1,7 @@
 export type UiEvent =
   | { type: 'status'; label: string; model?: string | null }
+  | { type: 'turn_start' }
+  | { type: 'retry' }
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_start' }
   | { type: 'thinking_delta'; delta: string }
@@ -18,11 +20,20 @@ export type ToolCall = {
   isError?: boolean;
 };
 
+/** 随用户消息一起发送的附件（已上传到项目目录，path 相对项目根）。 */
+export type ChatAttachment = {
+  name: string;
+  path: string;
+  mimeType: string;
+  size: number;
+};
+
 export type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   thinking?: string;
   tools?: ToolCall[];
+  attachments?: ChatAttachment[];
   error?: string;
   createdAt: number;
   /** Client-only: this message is still streaming. */
@@ -63,6 +74,8 @@ export type ProjectMeta = {
   instructions?: string | null;
   skillId?: string | null;
   pendingPrompt?: string | null;
+  /** 随 pendingPrompt 一起预填的附件（快速简报里选的文件，已上传到项目目录）。 */
+  pendingAttachments?: ChatAttachment[] | null;
   metadata?: ProjectMetadata;
   /** server 派生:该项目是否有正在生成的会话。 */
   running?: boolean;
@@ -71,6 +84,8 @@ export type ProjectMeta = {
 export type ConversationMeta = {
   id: string;
   title: string | null;
+  /** 会话级模型覆盖（provider/id）；null/缺省 = 跟随项目设置。 */
+  model?: string | null;
   createdAt: number;
   updatedAt: number;
 };

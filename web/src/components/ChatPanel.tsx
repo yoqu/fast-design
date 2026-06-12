@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
-import { api, streamChat } from '../lib/api';
-import type { ChatMessage, ConversationSummary, ToolCall, UiEvent } from '../lib/types';
+import { api, piApi, streamChat } from '../lib/api';
+import type { ChatAttachment, ChatMessage, ConversationSummary, PiModel, ToolCall, UiEvent } from '../lib/types';
 import { deriveGenerationModel, type GenerationInput, type GenerationModel } from '../lib/generation';
-import Composer from './Composer';
+import Composer, { type ComposerSeed } from './Composer';
 import MessageView from './MessageView';
 import ConversationsMenu from './ConversationsMenu';
 import { ArrowLeftIcon } from './icons';
@@ -20,6 +20,10 @@ type Props = {
   onCreateConversation: () => void;
   onRenameConversation: (cid: string, title: string) => void;
   onDeleteConversation: (cid: string) => void;
+  /** 项目设置里的默认模型（会话未覆盖时跟随它）。 */
+  projectModel: string | null;
+  /** 设置会话级模型覆盖（null = 恢复跟随项目设置）。 */
+  onSetConversationModel: (cid: string, model: string | null) => void;
   /** Receives the derived generation model on every streaming event. */
   onGeneration?: (model: GenerationModel) => void;
   /** Registers a retry function (re-sends the last user message). */
@@ -34,7 +38,9 @@ type Props = {
   onMessages?: (messages: ChatMessage[]) => void;
   /** 项目的待发提示词；非空时预填 composer 并触发 onConsumePendingPrompt。 */
   pendingPrompt?: string | null;
-  /** 预填后清除持久化 pendingPrompt（PATCH null）。 */
+  /** 随 pendingPrompt 一起预填的附件（快速简报里上传的文件）。 */
+  pendingAttachments?: ChatAttachment[] | null;
+  /** 预填后清除持久化 pendingPrompt/pendingAttachments（PATCH null）。 */
   onConsumePendingPrompt?: () => void;
 };
 
@@ -48,10 +54,16 @@ function writtenFileFrom(name: string | null, input: unknown): string | null {
   return typeof candidate === 'string' && candidate ? candidate.split('/').pop() ?? null : null;
 }
 
-export default function ChatPanel({ projectId, conversationId, conversations, projectName, onBack, onSelectConversation, onCreateConversation, onRenameConversation, onDeleteConversation, onGeneration, retryRef, sendRef, onMessages, pendingPrompt, onConsumePendingPrompt }: Props) {
+export default function ChatPanel({ projectId, conversationId, conversations, projectName, onBack, onSelectConversation, onCreateConversation, onRenameConversation, onDeleteConversation, projectModel, onSetConversationModel, onGeneration, retryRef, sendRef, onMessages, pendingPrompt, pendingAttachments, onConsumePendingPrompt }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [models, setModels] = useState<PiModel[]>([]);
+  const conversationModel = conversations.find((c) => c.id === conversationId)?.model ?? null;
+
+  useEffect(() => {
+    piApi.models().then(setModels).catch(() => setModels([]));
+  }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const generationInput = useRef<GenerationInput>({
@@ -63,23 +75,23 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
     lastWrite: null,
     turnEnded: false,
   });
-  const lastUserText = useRef<string | null>(null);
+  const lastUserInput = useRef<{ text: string; attachments: ChatAttachment[] } | null>(null);
   // 当前回合的流式请求控制器：卸载（切换会话/项目）时中断读流，
   // 防止旧回合的 finally 把共享的 generation 状态写给新会话。
   const streamAbort = useRef<AbortController | null>(null);
 
-  // 一次性预填触发器：本挂载周期内只从 pendingPrompt 设值一次，之后保持不变
-  // （Composer 的 seed effect 不会重跑，不会覆盖用户后续输入）。
-  const [composerSeed, setComposerSeed] = useState<string | null>(null);
+  // 一次性预填触发器：本挂载周期内只从 pendingPrompt/pendingAttachments 设值
+  // 一次，之后保持不变（Composer 的 seed effect 不会重跑，不会覆盖用户后续输入）。
+  const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
   const consumedPendingPrompt = useRef(false);
 
   useEffect(() => {
     if (consumedPendingPrompt.current) return;
-    if (!pendingPrompt?.trim()) return;
+    if (!pendingPrompt?.trim() && !pendingAttachments?.length) return;
     consumedPendingPrompt.current = true;
-    setComposerSeed(pendingPrompt);
+    setComposerSeed({ text: pendingPrompt ?? '', attachments: pendingAttachments ?? [] });
     onConsumePendingPrompt?.();
-  }, [pendingPrompt, onConsumePendingPrompt]);
+  }, [pendingPrompt, pendingAttachments, onConsumePendingPrompt]);
 
   const pushGeneration = useCallback(
     (patch: Partial<GenerationInput>) => {
@@ -128,10 +140,10 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
   }, []);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, attachments: ChatAttachment[] = []) => {
       setBusy(true);
       setStatus('连接中');
-      lastUserText.current = text;
+      lastUserInput.current = { text, attachments };
       pushGeneration({
         busy: true,
         aborted: false,
@@ -143,14 +155,41 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
       });
       setMessages((prev) => [
         ...prev,
-        { role: 'user', content: text, createdAt: Date.now() },
+        {
+          role: 'user',
+          content: text,
+          ...(attachments.length > 0 ? { attachments } : {}),
+          createdAt: Date.now(),
+        },
         { role: 'assistant', content: '', createdAt: Date.now(), streaming: true },
       ]);
+
+      // 回合检查点：pi 自动重试会把出错回合整个重发（见 server 端同名逻辑），
+      // 收到 retry 事件时回滚半截输出并清掉错误标记。
+      const checkpoint = { content: 0, thinking: 0 };
 
       const handleEvent = (ev: UiEvent) => {
         switch (ev.type) {
           case 'status':
             setStatus(ev.label);
+            break;
+          case 'turn_start':
+            updateLast((m) => {
+              checkpoint.content = m.content.length;
+              checkpoint.thinking = m.thinking?.length ?? 0;
+              return m;
+            });
+            break;
+          case 'retry':
+            updateLast((m) => ({
+              ...m,
+              content: m.content.slice(0, checkpoint.content),
+              ...(m.thinking !== undefined
+                ? { thinking: m.thinking.slice(0, checkpoint.thinking) }
+                : {}),
+              error: undefined,
+            }));
+            pushGeneration({ error: null });
             break;
           case 'text_delta':
             updateLast((m) => ({ ...m, content: m.content + ev.delta }));
@@ -190,7 +229,7 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
       const controller = new AbortController();
       streamAbort.current = controller;
       try {
-        await streamChat(projectId, conversationId, text, handleEvent, controller.signal);
+        await streamChat(projectId, conversationId, text, handleEvent, controller.signal, attachments);
       } catch (err) {
         if (!controller.signal.aborted) {
           const message = err instanceof Error ? err.message : '请求失败';
@@ -217,7 +256,8 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
   useEffect(() => {
     if (!retryRef) return;
     retryRef.current = () => {
-      if (lastUserText.current && !generationInput.current.busy) void send(lastUserText.current);
+      const last = lastUserInput.current;
+      if (last && !generationInput.current.busy) void send(last.text, last.attachments);
     };
     return () => {
       retryRef.current = null;
@@ -289,7 +329,7 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
           </div>
         )}
         {messages.map((m, i) => (
-          <MessageView key={i} message={m} />
+          <MessageView key={i} message={m} projectId={projectId} />
         ))}
       </div>
       {status && (
@@ -298,7 +338,17 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
           {status}
         </div>
       )}
-      <Composer busy={busy} seed={composerSeed} onSend={send} onStop={stop} />
+      <Composer
+        projectId={projectId}
+        busy={busy}
+        seed={composerSeed}
+        models={models}
+        model={conversationModel}
+        projectModel={projectModel}
+        onModelChange={(m) => onSetConversationModel(conversationId, m)}
+        onSend={send}
+        onStop={stop}
+      />
     </div>
   );
 }

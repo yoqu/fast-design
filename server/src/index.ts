@@ -31,6 +31,7 @@ import {
   readConversationHistory,
   updateConversation,
 } from './conversations.js';
+import { composePromptWithAttachments, parsePendingAttachmentsPatch, sanitizeAttachments } from './attachments.js';
 import { importClaudeDesignZip } from './claude-design-import.js';
 import { parseCreateProjectBody } from './project-create.js';
 import { designAppendPrompts } from './prompts/compose.js';
@@ -75,7 +76,7 @@ const sessions = new Map<string, PiSession>();
 
 const sessionKey = (projectId: string, cid: string) => `${projectId}:${cid}`;
 
-function launchConfigFor(id: string): SessionLaunchConfig {
+function launchConfigFor(id: string, cid: string): SessionLaunchConfig {
   const meta = getProject(id);
   // 设计链路提示栈（locale → discovery 主导层 → 技术栈契约 → 项目元数据块），
   // 对齐参照 composeSystemPrompt 的栈序；全局/项目自定义指令拼在其后。
@@ -86,14 +87,16 @@ function launchConfigFor(id: string): SessionLaunchConfig {
   if (projectInstructions) appendPrompts.push(projectInstructions);
   // 启用中的内置/项目设计 skill 的绝对路径，spawn 时经 pi --skill 显式注入。
   const skillPaths = enabledSkillPaths(projectDir(id));
-  return { model: meta?.model ?? null, thinking: meta?.thinking ?? null, appendPrompts, skillPaths };
+  // 模型取值：会话覆盖 > 项目设置 > null（跟随全局默认）。
+  const model = getConversation(id, cid)?.model ?? meta?.model ?? null;
+  return { model, thinking: meta?.thinking ?? null, appendPrompts, skillPaths };
 }
 
 function sessionFor(id: string, cid: string): PiSession {
   const key = sessionKey(id, cid);
   let session = sessions.get(key);
   if (!session) {
-    session = new PiSession(projectDir(id), () => launchConfigFor(id), piSessionDirFor(id, cid));
+    session = new PiSession(projectDir(id), () => launchConfigFor(id, cid), piSessionDirFor(id, cid));
     sessions.set(key, session);
   }
   return session;
@@ -162,9 +165,10 @@ app.patch('/api/projects/:id', (req, res) => {
     instructions: pick('instructions'),
     skillId: pick('skillId'),
     pendingPrompt: pick('pendingPrompt'),
+    pendingAttachments: parsePendingAttachmentsPatch(body.pendingAttachments),
   });
   // 字段出现即视为有修改意图（含 null 清除；非字符串值经 pick 归一化为 null）。
-  // pendingPrompt 不在列表内：清除待发提示词不应重启 pi 进程。
+  // pendingPrompt/pendingAttachments 不在列表内：清除待发预填不应重启 pi 进程。
   const affectsSession = ['model', 'thinking', 'instructions', 'skillId'].some((k) => body[k] !== undefined);
   if (affectsSession) {
     disposeProjectSessions(id, true);
@@ -191,10 +195,22 @@ app.patch('/api/projects/:id/conversations/:cid', (req, res) => {
   const { id, cid } = req.params;
   if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
   const title = req.body?.title;
+  const model = req.body?.model;
   const updated = updateConversation(id, cid, {
     title: title === undefined ? undefined : typeof title === 'string' ? title : null,
+    model: model === undefined ? undefined : typeof model === 'string' ? model : null,
   });
   if (!updated) return res.status(404).json({ error: 'conversation not found' });
+  // 模型字段出现即视为切换意图：dispose 该会话的空闲 pi 进程，下一条消息
+  // 用新模型 --continue 重启（对齐项目设置 PATCH 的处理；busy 时由前端禁用切换）。
+  if (model !== undefined) {
+    const key = sessionKey(id, cid);
+    const session = sessions.get(key);
+    if (session && !session.isBusy) {
+      session.dispose();
+      sessions.delete(key);
+    }
+  }
   res.json({ conversation: updated });
 });
 
@@ -225,7 +241,8 @@ app.post('/api/projects/:id/conversations/:cid/chat', async (req, res) => {
   if (!getProject(id)) return res.status(404).json({ error: 'project not found' });
   if (!getConversation(id, cid)) return res.status(404).json({ error: 'conversation not found' });
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
-  if (!message) return res.status(400).json({ error: 'message is required' });
+  const attachments = sanitizeAttachments(req.body?.attachments);
+  if (!message && attachments.length === 0) return res.status(400).json({ error: 'message is required' });
 
   const session = sessionFor(id, cid);
   if (session.isBusy) return res.status(409).json({ error: 'agent 正忙，请先停止当前回合' });
@@ -234,14 +251,32 @@ app.post('/api/projects/:id/conversations/:cid/chat', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.flushHeaders();
 
-  appendConversationHistory(id, cid, { role: 'user', content: message, createdAt: Date.now() });
+  appendConversationHistory(id, cid, {
+    role: 'user',
+    content: message,
+    ...(attachments.length > 0 ? { attachments } : {}),
+    createdAt: Date.now(),
+  });
 
   // Accumulate the assistant turn so it can be persisted once finished.
   const assistant: ChatMessage = { role: 'assistant', content: '', createdAt: Date.now() };
   const tools: ToolCall[] = [];
+  // 回合检查点：pi 自动重试会把出错回合整个重发，回滚到检查点避免半截输出重复入档。
+  const checkpoint = { content: 0, thinking: 0 };
 
   const emit = (ev: UiEvent) => {
     switch (ev.type) {
+      case 'turn_start':
+        checkpoint.content = assistant.content.length;
+        checkpoint.thinking = assistant.thinking?.length ?? 0;
+        break;
+      case 'retry':
+        assistant.content = assistant.content.slice(0, checkpoint.content);
+        if (assistant.thinking !== undefined) {
+          assistant.thinking = assistant.thinking.slice(0, checkpoint.thinking);
+        }
+        delete assistant.error;
+        break;
       case 'text_delta':
         assistant.content += ev.delta;
         break;
@@ -271,7 +306,7 @@ app.post('/api/projects/:id/conversations/:cid/chat', async (req, res) => {
     if (session.isBusy) session.abort();
   });
 
-  await session.prompt(message, emit);
+  await session.prompt(composePromptWithAttachments(message, attachments), emit);
   if (tools.length > 0) assistant.tools = tools;
   appendConversationHistory(id, cid, assistant);
   res.write(`${JSON.stringify({ type: 'done' } satisfies UiEvent)}\n`);

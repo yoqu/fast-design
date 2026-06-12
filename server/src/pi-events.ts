@@ -22,9 +22,13 @@ export function mapPiEvent(raw: JsonRecord, emit: (ev: UiEvent) => void): 'agent
       emit({ type: 'status', label: 'working' });
       return null;
     case 'agent_end':
-      return 'agent_end';
+      // willRetry=true：pi 即将对可重试错误（流中断/限流等）退避后自动续跑，
+      // 回合还没结束。这里提前收尾会让 webui 空闲而 pi 仍在流式，后续
+      // prompt 全被 "Agent is already processing" 拒绝。
+      return raw.willRetry === true ? null : 'agent_end';
     case 'turn_start':
       emit({ type: 'status', label: 'thinking' });
+      emit({ type: 'turn_start' });
       return null;
     case 'turn_end': {
       const message = getRecord(raw.message);
@@ -107,12 +111,19 @@ export function mapPiEvent(raw: JsonRecord, emit: (ev: UiEvent) => void): 'agent
       return null;
     case 'auto_retry_start':
       emit({ type: 'status', label: 'retrying' });
+      // pi 会把出错的 assistant 消息从上下文移除并整回合重发，
+      // 通知消费方回滚该回合已收到的半截输出。
+      emit({ type: 'retry' });
       return null;
     case 'auto_retry_end':
       if (raw.success === false) {
         const message =
           typeof raw.finalError === 'string' && raw.finalError ? raw.finalError : 'Auto-retry exhausted';
         emit({ type: 'error', message });
+        // 重试在退避中被取消（abort）时 pi 不会再发 agent_end，这里就是终点；
+        // 重试次数耗尽的路径里 agent_end(willRetry:false) 先到、回合已收尾，
+        // 此事件会因 emit 已清空而被丢弃，不会双重收尾。
+        return 'agent_end';
       }
       return null;
     default:

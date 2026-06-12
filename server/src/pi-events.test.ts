@@ -67,6 +67,44 @@ describe('mapPiEvent', () => {
     expect(collect({ type: 'agent_end' }).end).toBe(true);
     expect(collect({ type: 'turn_start' }).end).toBe(false);
   });
+
+  // turn_start 同时发显式事件：消费方以此记录回合检查点，自动重试时
+  // 回滚失败回合的残留半截输出。
+  it('emits an explicit turn_start alongside the status', () => {
+    expect(collect({ type: 'turn_start' }).events).toEqual([
+      { type: 'status', label: 'thinking' },
+      { type: 'turn_start' },
+    ]);
+  });
+
+  it('emits an explicit retry alongside the retrying status', () => {
+    expect(collect({ type: 'auto_retry_start' }).events).toEqual([
+      { type: 'status', label: 'retrying' },
+      { type: 'retry' },
+    ]);
+  });
+
+  // pi 对可重试错误（如 Stream ended without finish_reason）会先发
+  // agent_end(willRetry:true) 再退避后自动续跑：此时回合并未结束，
+  // 提前结束会造成 webui 空闲/pi 仍在流式的状态分叉（prompt 全被拒）。
+  it('keeps the turn open when agent_end announces an auto-retry', () => {
+    expect(collect({ type: 'agent_end', willRetry: true }).end).toBe(false);
+    expect(collect({ type: 'agent_end', willRetry: false }).end).toBe(true);
+  });
+
+  // 自动重试失败（含退避中被 abort 取消）后 pi 不会再发 agent_end，
+  // auto_retry_end(success:false) 就是回合的终点。
+  it('ends the turn when auto-retry fails for good', () => {
+    const failed = collect({ type: 'auto_retry_end', success: false, finalError: 'Retry cancelled' });
+    expect(failed.events).toEqual([{ type: 'error', message: 'Retry cancelled' }]);
+    expect(failed.end).toBe(true);
+  });
+
+  it('does not end the turn when auto-retry succeeds', () => {
+    const ok = collect({ type: 'auto_retry_end', success: true });
+    expect(ok.events).toEqual([]);
+    expect(ok.end).toBe(false);
+  });
 });
 
 describe('createJsonLineParser', () => {

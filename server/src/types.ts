@@ -3,6 +3,10 @@ export type JsonRecord = Record<string, unknown>;
 /** Events streamed to the web UI as NDJSON lines. */
 export type UiEvent =
   | { type: 'status'; label: string; model?: string | null }
+  /** 一个 LLM 回合开始：消费方记录检查点，供 retry 回滚半截输出。 */
+  | { type: 'turn_start' }
+  /** pi 自动重试即将续跑：丢弃当前回合的残留输出与错误标记。 */
+  | { type: 'retry' }
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_start' }
   | { type: 'thinking_delta'; delta: string }
@@ -21,11 +25,20 @@ export type ToolCall = {
   isError?: boolean;
 };
 
+/** 随用户消息一起发送的附件（已上传到项目目录，path 相对项目根）。 */
+export type ChatAttachment = {
+  name: string;
+  path: string;
+  mimeType: string;
+  size: number;
+};
+
 export type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   thinking?: string;
   tools?: ToolCall[];
+  attachments?: ChatAttachment[];
   error?: string;
   createdAt: number;
 };
@@ -64,6 +77,8 @@ export type ProjectMeta = {
   instructions?: string | null;
   skillId?: string | null;
   pendingPrompt?: string | null;
+  /** 随 pendingPrompt 一起预填的附件（快速简报里选的文件，已上传到项目目录）。 */
+  pendingAttachments?: ChatAttachment[] | null;
   metadata?: ProjectMetadata;
   /** GET /api/projects 派生字段(由 session isBusy 计算),不持久化。 */
   running?: boolean;
