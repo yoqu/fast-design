@@ -9,7 +9,7 @@
 **Tech Stack:** Node + Express + 同步 fs（仓库既有风格），vitest，React。
 
 **Spec:** `docs/superpowers/specs/2026-06-12-turn-resume-design.md`
-（实现偏差说明：journal 用每事件 `fs.appendFileSync` 而非 WriteStream——写入 OS 页缓存不 fsync，性能等价，但行为同步、测试确定，且与仓库全同步 fs 风格一致。）
+（实现偏差说明：① journal 用每事件 `fs.appendFileSync` 而非 WriteStream——写入 OS 页缓存不 fsync，性能等价，但行为同步、测试确定，且与仓库全同步 fs 风格一致；② `attachTurn` 不取 spec 的 `(…, onEvent) => boolean` 形态，而是两步返回消费函数或 null——调用方需在确认有回合后、消费前先补 streaming 占位消息；③ 用户消息落盘留在 chat 路由，`startTurn` 只管 assistant 收尾；④ 已知边界：进程死于回合开始后、首个事件流出前时无 journal，恢复后只剩孤立用户消息（spec 只承诺恢复已生成内容）。）
 
 **约定：** 所有命令在仓库根执行。server 测试 `cd server && npx vitest run src/turns.test.ts`；提交信息用中文，遵循仓库 `类型(范围): 说明` 风格。
 
