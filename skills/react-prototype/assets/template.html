@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>[REPLACE] 屏幕标题</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<link rel="stylesheet" href="css/tokens.css" />
+<style>
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); }
+  .boot-fallback { display: grid; place-items: center; min-height: 100vh; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="root"><div class="boot-fallback">正在加载 React 运行时…（需要网络访问 unpkg.com）</div></div>
+<noscript><div class="boot-fallback">此原型需要启用 JavaScript。</div></noscript>
+
+<!-- 共享组件文件：消费前先加载；文件末尾 Object.assign(window, {...}) 暴露 -->
+<!-- <script type="text/babel" data-presets="react" src="js/components.jsx"></script> -->
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
+
+function App() {
+  // [REPLACE] 真实受控状态：表单/步骤/筛选…… 持久状态写 localStorage
+  const [step, setStep] = useState(() => Number(localStorage.getItem('demo:step') || 0));
+  useEffect(() => { localStorage.setItem('demo:step', String(step)); }, [step]);
+  const appStyles = { wrap: { maxWidth: 960, margin: '0 auto', padding: 24 } };
+  return (
+    <main style={appStyles.wrap}>
+      {/* [REPLACE] 从 references/layouts.md 粘贴屏幕骨架 */}
+      <h1 className="text-2xl" style={{ fontFamily: 'var(--font-display)' }}>[REPLACE]</h1>
+    </main>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

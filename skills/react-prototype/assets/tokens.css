@@ -1,0 +1,16 @@
+/* oklch token 骨架 — 拷贝到项目 css/tokens.css 后按 brand-spec/direction 重绑。
+   六色契约：bg/surface/fg/muted/border/accent。颜色只能从这里引用。 */
+:root {
+  --bg: oklch(98% 0.005 250);
+  --surface: oklch(100% 0 0);
+  --fg: oklch(22% 0.02 250);
+  --muted: oklch(55% 0.02 250);
+  --border: oklch(90% 0.01 250);
+  --accent: oklch(58% 0.16 250);
+  --accent-fg: oklch(99% 0.01 250);
+  --radius: 10px;
+  --shadow: 0 1px 2px oklch(20% 0.02 250 / 0.06), 0 8px 24px oklch(20% 0.02 250 / 0.08);
+  --font-display: ui-serif, Georgia, serif;   /* [REPLACE] direction 的 display 字体 */
+  --font-body: ui-sans-serif, system-ui, sans-serif; /* [REPLACE] body 字体 */
+  --font-mono: ui-monospace, SFMono-Regular, monospace;
+}
