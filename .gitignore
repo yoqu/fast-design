@@ -4,4 +4,5 @@ data/
 .DS_Store
 *.log
 *.tsbuildinfo
+*.timestamp-*.mjs
 .claude/
