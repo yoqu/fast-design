@@ -51,7 +51,7 @@ The goal is not just "make it nicer." The goal is to ship working frontend code 
 
 4. Build production-grade frontend code.
    - Prefer the repository's existing framework, component conventions, icons, tokens, and styling approach.
-   - For standalone artifacts, create self-contained HTML/CSS/JS unless the user asked for a framework.
+   - For standalone artifacts, follow the default React prototype stack (see the `react-prototype` skill: html shell per screen, JSX components via pinned Babel CDN, tokens in css/tokens.css). Only fall back to a self-contained plain HTML/CSS/JS file when the user explicitly asks for a single-file or offline artifact.
    - Use semantic markup, keyboard-accessible controls, visible focus states, sensible contrast, and responsive layout constraints.
    - Use CSS variables for repeated colors, spacing, shadows, and type scale.
 
