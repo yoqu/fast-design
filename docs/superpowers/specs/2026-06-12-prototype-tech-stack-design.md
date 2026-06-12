@@ -18,7 +18,7 @@
 ## 用户决策（已确认）
 
 - 默认技术栈：**React 18 + Babel standalone + Tailwind CDN**，全局默认，不在创建面板暴露选项，创建流程 UI 不动。
-- stub 处置：**删除 11 个空壳，新建技术栈核心 skill**，保留 6 个有内容的 skill。
+- stub 处置：**从上游拉取真实内容补全 11 个空壳**（2026-06-12 修订，替代最初的"直接删除"决定），同时新建技术栈核心 skill；仅当上游确实拉取不到时才删除该 stub。保留 6 个已有内容的 skill。
 - Anthropic 提示词采纳范围：设计质量原则 + 动效 starter 资产 + 设备框架 starter + 变体探索工作流（全部四项）。
 - 架构：**方案 A 双层架构**——系统提示词放硬契约（恒在场），skill 放工艺细节与 starter 资产文件（可拷贝）。
 
@@ -83,15 +83,30 @@ skills/react-prototype/
 
 ### 与现存 skill 的分工
 
-`react-prototype` 承载技术栈；`gsap-core`（复杂动效）、`taste-skill`/`impeccable-design-polish`（品味打磨）、`image-to-code-skill`/`redesign-skill`（视觉还原）独立互补；`frontend-design` 修订后保留为设计工艺总纲。
+`react-prototype` 承载技术栈；`gsap-core`（复杂动效）、`taste-skill`/`impeccable-design-polish`（品味打磨）、`image-to-code-skill`/`redesign-skill`（视觉还原）独立互补；`frontend-design` 修订后保留为设计工艺总纲。上游补全后的 11 个 skill 按各自领域（品牌规范/主题/配色/设计评审/提示词增强等）与之并存——技术栈契约由系统提示词层恒置顶，skill 内容与之冲突时以契约为准。
 
 ## 第 3 段：清理、错误处理、测试与验收
 
-### skill 库清理
+### skill 库补全（替代删除）
 
-- 删除 11 个 stub 目录（名单见"背景"第 2 条）。
-- 修订 `frontend-design/SKILL.md` 第 4 条：默认栈改为"React 原型栈（见 react-prototype skill）"，自包含纯 HTML 降为用户显式要求时的例外。
-- 边界验证：`pi-skills.ts` 的 `bundledSkillsDisabled` 按目录扫描合并，删除目录后配置中的残留名字应被自然忽略——实现时验证，不写迁移代码。
+11 个 stub 全部带 `od.upstream` 地址，已核实可公网访问，来源：
+
+- anthropics/skills 官方：brand-guidelines、theme-factory、web-artifacts-builder
+- 厂商官方仓：web-design-guidelines（vercel-labs/skills）、frontend-dev（MiniMax-AI/skills）、enhance-prompt（google-labs-code/skills）
+- 社区仓：artifacts-builder（ComposioHQ/awesome-claude-skills）、ui-skills（ibelick）、ui-ux-pro-max（nextlevelbuilder）、color-expert（meodai）、design-review（garrytan/gstack）
+
+补全流程（**每个 stub 一个子 agent 并行执行**）：
+
+1. 读取本地 stub 的 `od.upstream`，定位上游仓里该 skill 的实际目录（URL 可能指仓库根，需在仓内按名字/SKILL.md 查找）。
+2. 浅克隆或按文件清单拉取该 skill 的**全部文件**（SKILL.md + references/ + assets/ + scripts/ 等），整目录覆盖本地 stub。
+3. frontmatter 合并：上游正文为准，但保留/回填本地 `od:` 块（mode/category/upstream），name 与目录名保持一致。
+4. 轻量适配，只修"坏掉的部分"：指向 claude.ai 专属工具或不存在路径的硬指令改为本应用语义；不重写、不删减上游工艺内容。与 tech-stack 契约冲突的条款无需逐条改——discovery 顶部已声明 OD core directives 覆盖后续一切内容。
+5. 拉取失败（仓库消失/路径不存在/无实质内容）的 stub 才删除，并在实施记录里列出名单与原因。
+
+其余清理：
+
+- 修订 `frontend-design/SKILL.md` 第 4 条：默认栈改为"React 原型栈（见 react-prototype skill）"，自包含纯 HTML 降为用户显式要求时的例外（注意：若上游补全也覆盖 frontend-design，此修订在覆盖后的版本上做）。
+- 边界验证：`pi-skills.ts` 的 `bundledSkillsDisabled` 按目录扫描合并，个别 skill 目录若被删除，配置中的残留名字应被自然忽略——实现时验证，不写迁移代码。
 
 ### 错误处理 / 降级
 
@@ -101,7 +116,7 @@ skills/react-prototype/
 ### 测试
 
 - `compose.test.ts` 扩展：断言 `designAppendPrompts` 含 tech-stack 段且顺序为 locale → discovery → tech-stack → metadata。
-- 新增 bundled skill 资产测试：列表含 `react-prototype` 且 assets/references 文件齐全；11 个 stub 目录不存在。
+- 新增 bundled skill 资产测试：列表含 `react-prototype` 且 assets/references 文件齐全；`skills/` 下不再存在 catalogue-entry 空壳（任何 SKILL.md 不得只含"去上游看"的目录卡片正文）。
 - `template.html` 冒烟：静态服务 + headless 加载，断言 root 挂载、console 无错误（实现阶段视成本可降为手动验收）。
 
 ### 验收标准
