@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
-import { api, piApi, streamChat } from '../lib/api';
+import { api, piApi, streamChat, attachTurn } from '../lib/api';
 import type { ChatAttachment, ChatMessage, ConversationSummary, PiModel, ToolCall, UiEvent } from '../lib/types';
 import { deriveGenerationModel, type GenerationInput, type GenerationModel } from '../lib/generation';
 import Composer, { type ComposerSeed } from './Composer';
@@ -101,36 +101,6 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
     [onGeneration],
   );
 
-  useEffect(() => {
-    setMessages([]);
-    setBusy(false);
-    setStatus(null);
-    generationInput.current = {
-      busy: false,
-      aborted: false,
-      error: null,
-      sawDelta: false,
-      lastActivity: null,
-      lastWrite: null,
-      turnEnded: false,
-    };
-    onGeneration?.(deriveGenerationModel(generationInput.current));
-    api.history(projectId, conversationId).then((msgs) => {
-      setMessages(msgs);
-    }).catch(() => setMessages([]));
-  }, [projectId, conversationId, onGeneration]);
-
-  // 消息变化（含流式逐 delta）上报给上层派生问卷状态。
-  useEffect(() => {
-    onMessages?.(messages);
-  }, [messages, onMessages]);
-
-  useEffect(() => {
-    if (stickToBottom.current) {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-    }
-  }, [messages]);
-
   const updateLast = useCallback((fn: (m: ChatMessage) => ChatMessage) => {
     setMessages((prev) => {
       const last = prev.at(-1);
@@ -139,11 +109,15 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
     });
   }, []);
 
-  const send = useCallback(
-    async (text: string, attachments: ChatAttachment[] = []) => {
+  // 消费一个回合的事件流（发送与刷新续接共用）：busy/状态初始化、事件归约、
+  // catch/finally 收尾一体。controller 中断（切会话/卸载）时跳过全部收尾状态写。
+  const consumeTurn = useCallback(
+    async (
+      run: (onEvent: (ev: UiEvent) => void) => Promise<void>,
+      controller: AbortController,
+    ) => {
       setBusy(true);
       setStatus('连接中');
-      lastUserInput.current = { text, attachments };
       pushGeneration({
         busy: true,
         aborted: false,
@@ -153,16 +127,6 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
         lastWrite: null,
         turnEnded: false,
       });
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'user',
-          content: text,
-          ...(attachments.length > 0 ? { attachments } : {}),
-          createdAt: Date.now(),
-        },
-        { role: 'assistant', content: '', createdAt: Date.now(), streaming: true },
-      ]);
 
       // 回合检查点：pi 自动重试会把出错回合整个重发（见 server 端同名逻辑），
       // 收到 retry 事件时回滚半截输出并清掉错误标记。
@@ -226,10 +190,9 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
         }
       };
 
-      const controller = new AbortController();
       streamAbort.current = controller;
       try {
-        await streamChat(projectId, conversationId, text, handleEvent, controller.signal, attachments);
+        await run(handleEvent);
       } catch (err) {
         if (!controller.signal.aborted) {
           const message = err instanceof Error ? err.message : '请求失败';
@@ -250,7 +213,81 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
         if (streamAbort.current === controller) streamAbort.current = null;
       }
     },
-    [projectId, conversationId, updateLast, pushGeneration],
+    [updateLast, pushGeneration],
+  );
+
+  useEffect(() => {
+    setMessages([]);
+    setBusy(false);
+    setStatus(null);
+    generationInput.current = {
+      busy: false,
+      aborted: false,
+      error: null,
+      sawDelta: false,
+      lastActivity: null,
+      lastWrite: null,
+      turnEnded: false,
+    };
+    onGeneration?.(deriveGenerationModel(generationInput.current));
+    let cancelled = false;
+    const controller = new AbortController();
+    api
+      .history(projectId, conversationId)
+      .then(async (msgs) => {
+        if (cancelled) return;
+        setMessages(msgs);
+        // 刷新/切回会话时续接进行中的回合：204 即空闲，照旧浏览。
+        const consume = await attachTurn(projectId, conversationId, controller.signal).catch(
+          () => null,
+        );
+        if (!consume || cancelled) return;
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: '', createdAt: Date.now(), streaming: true },
+        ]);
+        await consumeTurn(consume, controller);
+      })
+      .catch(() => {
+        if (!cancelled) setMessages([]);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [projectId, conversationId, onGeneration, consumeTurn]);
+
+  // 消息变化（含流式逐 delta）上报给上层派生问卷状态。
+  useEffect(() => {
+    onMessages?.(messages);
+  }, [messages, onMessages]);
+
+  useEffect(() => {
+    if (stickToBottom.current) {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    }
+  }, [messages]);
+
+  const send = useCallback(
+    async (text: string, attachments: ChatAttachment[] = []) => {
+      lastUserInput.current = { text, attachments };
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'user',
+          content: text,
+          ...(attachments.length > 0 ? { attachments } : {}),
+          createdAt: Date.now(),
+        },
+        { role: 'assistant', content: '', createdAt: Date.now(), streaming: true },
+      ]);
+      const controller = new AbortController();
+      await consumeTurn(
+        (onEvent) => streamChat(projectId, conversationId, text, onEvent, controller.signal, attachments),
+        controller,
+      );
+    },
+    [projectId, conversationId, consumeTurn],
   );
 
   useEffect(() => {
@@ -279,14 +316,12 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
     void api.abort(projectId, conversationId);
   }, [projectId, conversationId, pushGeneration]);
 
-  // 卸载时若 busy，中止当前回合（切换会话/项目）：先断客户端读流（避免
-  // finally 写共享 generation 状态），再请求服务端 abort。
+  // 卸载/切换会话时只断本地读流（避免 finally 写共享 generation 状态）。
+  // 回合与连接已解耦：服务端继续跑完并落盘，切回来可续接；
+  // 主动停止只走停止按钮（stop → api.abort）。
   useEffect(() => {
     return () => {
-      if (generationInput.current.busy) {
-        streamAbort.current?.abort();
-        void api.abort(projectId, conversationId);
-      }
+      streamAbort.current?.abort();
     };
   }, [projectId, conversationId]);
 
