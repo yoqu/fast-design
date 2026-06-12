@@ -1,43 +1,63 @@
 ---
 name: theme-factory
-description: |
-  Apply professional font and color themes to artifacts including slides, docs, reports, and HTML landing pages. Ships 10 pre-set themes.
-triggers:
-  - "theme factory"
-  - "apply theme"
-  - "design theme"
-  - "theme generator"
-  - "preset theme"
+description: Toolkit for styling artifacts with a theme. These artifacts can be slides, docs, reportings, HTML landing pages, etc. There are 10 pre-set themes with colors/fonts that you can apply to any artifact that has been creating, or can generate a new theme on-the-fly.
+license: Complete terms in LICENSE.txt
 od:
   mode: design-system
   category: design-systems
   upstream: "https://github.com/anthropics/skills/tree/main/skills/theme-factory"
 ---
 
-# theme-factory
 
-> Curated from Anthropic's official skills repository.
+# Theme Factory Skill
 
-## What it does
+This skill provides a curated collection of professional font and color themes themes, each with carefully selected color palettes and font pairings. Once a theme is chosen, it can be applied to any artifact.
 
-Apply professional font and color themes to artifacts including slides, docs, reports, and HTML landing pages. Ships 10 pre-set themes.
+## Purpose
 
-## Source
+To apply consistent, professional styling to presentation slide decks, use this skill. Each theme includes:
+- A cohesive color palette with hex codes
+- Complementary font pairings for headers and body text
+- A distinct visual identity suitable for different contexts and audiences
 
-- Upstream: https://github.com/anthropics/skills/tree/main/skills/theme-factory
-- Category: `design-systems`
+## Usage Instructions
 
-## How to use
+To apply styling to a slide deck or other artifact:
 
-This catalogue entry advertises the skill in Open Design so the agent
-discovers it during planning. To run the full upstream workflow with
-its original assets, scripts, and references, install the upstream
-bundle into your active agent's skills directory:
+1. **Show the theme showcase**: Present the 10 available themes to the user using the list in the "Themes Available" section of this skill. Each theme's `.md` file in the `themes/` directory contains the full color and font details.
+2. **Ask for their choice**: Ask which theme to apply to the deck
+3. **Wait for selection**: Get explicit confirmation about the chosen theme
+4. **Apply the theme**: Once a theme has been chosen, apply the selected theme's colors and fonts to the deck/artifact
 
-```bash
-# Inspect the upstream README for exact paths
-open https://github.com/anthropics/skills/tree/main/skills/theme-factory
-```
+## Themes Available
 
-Then ask the agent to invoke this skill by name (`theme-factory`) or with
-one of the trigger phrases listed in this skill's frontmatter.
+The following 10 themes are available:
+
+1. **Ocean Depths** - Professional and calming maritime theme
+2. **Sunset Boulevard** - Warm and vibrant sunset colors
+3. **Forest Canopy** - Natural and grounded earth tones
+4. **Modern Minimalist** - Clean and contemporary grayscale
+5. **Golden Hour** - Rich and warm autumnal palette
+6. **Arctic Frost** - Cool and crisp winter-inspired theme
+7. **Desert Rose** - Soft and sophisticated dusty tones
+8. **Tech Innovation** - Bold and modern tech aesthetic
+9. **Botanical Garden** - Fresh and organic garden colors
+10. **Midnight Galaxy** - Dramatic and cosmic deep tones
+
+## Theme Details
+
+Each theme is defined in the `themes/` directory with complete specifications including:
+- Cohesive color palette with hex codes
+- Complementary font pairings for headers and body text
+- Distinct visual identity suitable for different contexts and audiences
+
+## Application Process
+
+After a preferred theme is selected:
+1. Read the corresponding theme file from the `themes/` directory
+2. Apply the specified colors and fonts consistently throughout the deck
+3. Ensure proper contrast and readability
+4. Maintain the theme's visual identity across all slides
+
+## Create your Own Theme
+To handle cases where none of the existing themes work for an artifact, create a custom theme. Based on provided inputs, generate a new theme similar to the ones above. Give the theme a similar name describing what the font/color combinations represent. Use any basic description provided to choose appropriate colors/fonts. After generating the theme, show it for review and verification. Following that, apply the theme as described above.
