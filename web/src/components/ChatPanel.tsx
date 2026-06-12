@@ -24,7 +24,10 @@ type Props = {
   projectModel: string | null;
   /** 设置会话级模型覆盖（null = 恢复跟随项目设置）。 */
   onSetConversationModel: (cid: string, model: string | null) => void;
-  /** Receives the derived generation model on every streaming event. */
+  /**
+   * 每次流式事件触发时上报派生的 generation model。
+   * 参与历史加载 effect 的依赖数组，必须传稳定引用(useCallback/state setter)。
+   */
   onGeneration?: (model: GenerationModel) => void;
   /** Registers a retry function (re-sends the last user message). */
   retryRef?: MutableRefObject<(() => void) | null>;
@@ -42,6 +45,8 @@ type Props = {
   pendingAttachments?: ChatAttachment[] | null;
   /** 预填后清除持久化 pendingPrompt/pendingAttachments（PATCH null）。 */
   onConsumePendingPrompt?: () => void;
+  /** 回合结束回调：上层刷新会话列表（拿自动生成的标题等）。 */
+  onTurnEnd?: () => void;
 };
 
 const WRITE_TOOL_RE = /write|edit|patch|create/i;
@@ -54,7 +59,7 @@ function writtenFileFrom(name: string | null, input: unknown): string | null {
   return typeof candidate === 'string' && candidate ? candidate.split('/').pop() ?? null : null;
 }
 
-export default function ChatPanel({ projectId, conversationId, conversations, projectName, onBack, onSelectConversation, onCreateConversation, onRenameConversation, onDeleteConversation, projectModel, onSetConversationModel, onGeneration, retryRef, sendRef, onMessages, pendingPrompt, pendingAttachments, onConsumePendingPrompt }: Props) {
+export default function ChatPanel({ projectId, conversationId, conversations, projectName, onBack, onSelectConversation, onCreateConversation, onRenameConversation, onDeleteConversation, projectModel, onSetConversationModel, onGeneration, retryRef, sendRef, onMessages, pendingPrompt, pendingAttachments, onConsumePendingPrompt, onTurnEnd }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -209,11 +214,12 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
           setBusy(false);
           setStatus(null);
           pushGeneration({ busy: false, turnEnded: true });
+          onTurnEnd?.();
         }
         if (streamAbort.current === controller) streamAbort.current = null;
       }
     },
-    [updateLast, pushGeneration],
+    [updateLast, pushGeneration, onTurnEnd],
   );
 
   useEffect(() => {
@@ -239,9 +245,17 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
         setMessages(msgs);
         // 刷新/切回会话时续接进行中的回合：204 即空闲，照旧浏览。
         const consume = await attachTurn(projectId, conversationId, controller.signal).catch(
-          () => null,
+          (err: unknown) => {
+            if (!controller.signal.aborted) console.warn('续接进行中回合失败', err);
+            return null;
+          },
         );
-        if (!consume || cancelled) return;
+        // 竞态防护：探测期间用户已抢先发送（POST 路径已在消费）则放弃续接，
+        // 否则同一条消息会被双路 updateLast 写出翻倍文本。
+        if (!consume || cancelled || streamAbort.current) {
+          if (consume) controller.abort(); // 释放服务端的 GET 订阅
+          return;
+        }
         setMessages((prev) => [
           ...prev,
           { role: 'assistant', content: '', createdAt: Date.now(), streaming: true },
