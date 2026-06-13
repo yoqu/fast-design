@@ -570,10 +570,12 @@ export default function Composer({ projectId, busy, seed, models, model, project
                   modelMenuOpen ? 'bg-zinc-100 text-zinc-700' : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700'
                 }`}
               >
-                <span className="truncate">
+                <span className="truncate leading-none">
                   {model ? modelShortName(model) : projectModel ? modelShortName(projectModel) : '全局默认'}
                 </span>
-                {!model && projectModel && <span className="shrink-0 text-[10px] text-zinc-300">跟随</span>}
+                {!model && projectModel && (
+                  <span className="shrink-0 rounded bg-zinc-100 px-1 py-0.5 text-[10px] leading-none text-zinc-400">跟随</span>
+                )}
                 <ChevronDownIcon size={12} className="shrink-0" />
               </button>
               {modelMenuOpen && (
