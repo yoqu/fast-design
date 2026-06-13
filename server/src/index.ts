@@ -13,6 +13,7 @@ import {
   createProject,
   decodeMultipartFilename,
   deleteProject,
+  detectEntryFile,
   getProject,
   listFiles,
   listProjects,
@@ -127,7 +128,17 @@ function disposeIdleSessions(): void {
 
 app.get('/api/projects', (_req, res) => {
   const running = runningProjectIds(sessions);
-  res.json(listProjects().map((p) => ({ ...p, running: running.has(p.id) })));
+  res.json(
+    listProjects().map((p) => {
+      // 生成类项目 meta 不写 entryFile，按需即时探测，让列表缩略图能渲染。
+      const entryFile = p.metadata?.entryFile ?? detectEntryFile(p.id);
+      return {
+        ...p,
+        running: running.has(p.id),
+        metadata: { ...(p.metadata ?? {}), entryFile },
+      };
+    }),
+  );
 });
 
 app.post('/api/projects', (req, res) => {

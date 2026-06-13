@@ -197,3 +197,27 @@ export function listFiles(id: string): FileEntry[] {
   walk(root);
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
+
+/**
+ * 从一组相对路径里挑出最适合做预览入口的 HTML：index.html 优先，其次根目录
+ * 下的 HTML，再次任意 HTML；无 HTML 返回 null。与 claude-design-import 的
+ * chooseEntryFile 同源逻辑（缩略图与导入入口判定保持一致）。
+ */
+export function pickEntryFile(paths: string[]): string | null {
+  const html = paths.filter((p) => /\.html?$/i.test(p));
+  if (html.length === 0) return null;
+  const lower = new Map(html.map((p) => [p.toLowerCase(), p]));
+  return lower.get('index.html') ?? html.find((p) => !p.includes('/')) ?? html[0] ?? null;
+}
+
+/**
+ * 扫描项目目录识别预览入口 HTML（供列表缩略图用）。生成类项目的 meta 不写
+ * entryFile，这里按需即时探测，避免落库后随文件增删而过期。
+ */
+export function detectEntryFile(id: string): string | null {
+  try {
+    return pickEntryFile(listFiles(id).map((f) => f.path));
+  } catch {
+    return null;
+  }
+}
