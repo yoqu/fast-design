@@ -8,7 +8,10 @@ import {
   enabledSkillPaths,
   listSkills,
   readSkillContent,
+  resolveSkills,
+  sanitizeSkillRefs,
   setSkillEnabled,
+  skillReferenceDirective,
   writeSkillContent,
 } from './pi-skills.js';
 
@@ -196,5 +199,62 @@ describe('create / read / write / delete', () => {
     expect(() => readSkillContent('global', '../../../etc/passwd', null)).toThrow(/BAD_PATH/);
     expect(() => deleteSkill('global', '..', null)).toThrow(/BAD_PATH/);
     expect(() => writeSkillContent('project', '../x', '---\nname: a\ndescription: b\n---\n', projDir)).toThrow(/BAD_PATH/);
+  });
+});
+
+describe('sanitizeSkillRefs', () => {
+  it('保留合法 ref、按 scope+rel 去重、丢弃非法项', () => {
+    const out = sanitizeSkillRefs([
+      { scope: 'bundled', rel: 'a' },
+      { scope: 'bundled', rel: 'a' }, // 重复
+      { scope: 'project', rel: ' b ' }, // trim
+      { scope: 'nope', rel: 'c' }, // 非法 scope
+      { scope: 'global', rel: '' }, // 空 rel
+      'garbage',
+      null,
+    ]);
+    expect(out).toEqual([
+      { scope: 'bundled', rel: 'a' },
+      { scope: 'project', rel: 'b' },
+    ]);
+  });
+
+  it('非数组返回空', () => {
+    expect(sanitizeSkillRefs(undefined)).toEqual([]);
+    expect(sanitizeSkillRefs({})).toEqual([]);
+  });
+});
+
+describe('resolveSkills', () => {
+  it('把 ref 解析为技能目录绝对路径并带回 name/description，缺失项跳过', () => {
+    writeSkill(bundledDir, 'hero'); // name=hero, description=技能 hero
+    writeSkill(path.join(projDir, '.pi', 'skills'), 'local');
+    const out = resolveSkills(
+      [
+        { scope: 'bundled', rel: 'hero' },
+        { scope: 'project', rel: 'local' },
+        { scope: 'bundled', rel: 'missing' },
+      ],
+      projDir,
+    );
+    expect(out).toEqual([
+      { path: path.join(bundledDir, 'hero'), name: 'hero', description: '技能 hero' },
+      { path: path.join(projDir, '.pi', 'skills', 'local'), name: 'local', description: '技能 local' },
+    ]);
+  });
+
+  it('空输入返回空', () => {
+    expect(resolveSkills([], projDir)).toEqual([]);
+  });
+});
+
+describe('skillReferenceDirective', () => {
+  it('拼接成引导指令', () => {
+    const text = skillReferenceDirective([{ name: 'hero', description: '英雄区' }]);
+    expect(text).toContain('hero');
+    expect(text).toContain('英雄区');
+  });
+  it('空列表返回空串', () => {
+    expect(skillReferenceDirective([])).toBe('');
   });
 });
