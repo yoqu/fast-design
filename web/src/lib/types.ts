@@ -45,6 +45,8 @@ export type ChatMessage = {
   /** 有序片段；缺省（旧历史）由渲染层按 thinking→tools→content 合成。 */
   parts?: MessagePart[];
   attachments?: ChatAttachment[];
+  /** 本条用户消息引用的 skill 名（仅展示）。 */
+  skills?: string[];
   error?: string;
   createdAt: number;
   /** Client-only: this message is still streaming. */
@@ -150,6 +152,9 @@ export type SkillInfo = {
   scope: 'global' | 'project' | 'bundled';
   enabled: boolean;
 };
+
+/** 对话区引用的 skill（每条消息一次性）。scope/rel 用于送达后端，name 用于本地回显。 */
+export type SkillRef = { scope: SkillInfo['scope']; rel: string; name: string };
 
 export type ExtensionInfo = { source: string };
 export type ExtensionOpResult = { ok: boolean; output: string };
