@@ -37,7 +37,7 @@ import { autoTitleConversation } from './conversation-title.js';
 import { importClaudeDesignZip } from './claude-design-import.js';
 import { parseCreateProjectBody } from './project-create.js';
 import { designAppendPrompts } from './prompts/compose.js';
-import { enabledSkillPaths } from './pi-skills.js';
+import { enabledSkillPaths, resolveSkills, sanitizeSkillRefs, skillReferenceDirective } from './pi-skills.js';
 import { runningProjectIds } from './running.js';
 import { activeTurn, pipeTurnToResponse, recoverInterruptedTurns, removeTurnJournal, startTurn } from './turns.js';
 import { registerPiRoutes } from './pi-routes.js';
@@ -76,6 +76,9 @@ const importUpload = multer({
 
 const sessions = new Map<string, PiSession>();
 
+/** 每会话经对话引用过的 skill 目录路径并集；只增不减，作为「已注入哪些 skill」缓存。 */
+const referencedSkillPaths = new Map<string, Set<string>>();
+
 const sessionKey = (projectId: string, cid: string) => `${projectId}:${cid}`;
 
 function launchConfigFor(id: string, cid: string): SessionLaunchConfig {
@@ -87,8 +90,12 @@ function launchConfigFor(id: string, cid: string): SessionLaunchConfig {
   if (globalInstructions) appendPrompts.push(globalInstructions);
   const projectInstructions = meta?.instructions?.trim();
   if (projectInstructions) appendPrompts.push(projectInstructions);
-  // 启用中的内置/项目设计 skill 的绝对路径，spawn 时经 pi --skill 显式注入。
-  const skillPaths = enabledSkillPaths(projectDir(id));
+  // 启用中的内置/项目设计 skill + 本会话经对话引用过的 skill，spawn 时经 pi --skill 显式注入。
+  const referenced = referencedSkillPaths.get(sessionKey(id, cid));
+  const baseSkillPaths = enabledSkillPaths(projectDir(id));
+  const skillPaths = referenced
+    ? Array.from(new Set([...baseSkillPaths, ...referenced]))
+    : baseSkillPaths;
   // 模型取值：会话覆盖 > 项目设置 > null（跟随全局默认）。
   const model = getConversation(id, cid)?.model ?? meta?.model ?? null;
   return { model, thinking: meta?.thinking ?? null, appendPrompts, skillPaths };
@@ -262,6 +269,30 @@ app.post('/api/projects/:id/conversations/:cid/chat', async (req, res) => {
     return res.status(409).json({ error: 'agent 正忙，请先停止当前回合' });
   }
 
+  // 解析本回合引用的 skill：并入会话注入集合；有新增则重启（空闲）会话使其按新 --skill 重 spawn。
+  const resolvedSkills = resolveSkills(sanitizeSkillRefs(req.body?.skills), projectDir(id));
+  if (resolvedSkills.length > 0) {
+    const key = sessionKey(id, cid);
+    let set = referencedSkillPaths.get(key);
+    if (!set) {
+      set = new Set();
+      referencedSkillPaths.set(key, set);
+    }
+    let changed = false;
+    for (const r of resolvedSkills) {
+      if (!set.has(r.path)) {
+        set.add(r.path);
+        changed = true;
+      }
+    }
+    if (changed) {
+      session.dispose();
+      sessions.delete(key);
+    }
+  }
+  // 重启后用新配置取回会话（未重启则同一实例）。
+  const liveSession = sessionFor(id, cid);
+
   // 首条消息且对话未命名：与回合并行跑一次性 AI 总结生成对话标题。
   const conv = getConversation(id, cid);
   if (conv && !conv.title && message && readConversationHistory(id, cid).length === 0) {
@@ -273,18 +304,22 @@ app.post('/api/projects/:id/conversations/:cid/chat', async (req, res) => {
     });
   }
 
+  const skillNames = resolvedSkills.map((s) => s.name);
   appendConversationHistory(id, cid, {
     role: 'user',
     content: message,
     ...(attachments.length > 0 ? { attachments } : {}),
+    ...(skillNames.length > 0 ? { skills: skillNames } : {}),
     createdAt: Date.now(),
   });
 
+  const directive = skillReferenceDirective(resolvedSkills);
+  const base = composePromptWithAttachments(message, attachments);
+  const prompt = directive ? `${directive}\n\n${base}` : base;
+
   // 回合与连接解耦：本响应只是第一个订阅者。客户端断开仅退订、不再 abort，
   // 回合后台跑完并由 startTurn 统一折叠落盘（spec: 2026-06-12-turn-resume）。
-  const { turn } = startTurn(id, cid, (emit) =>
-    session.prompt(composePromptWithAttachments(message, attachments), emit),
-  );
+  const { turn } = startTurn(id, cid, (emit) => liveSession.prompt(prompt, emit));
   pipeTurnToResponse(turn, res);
 });
 

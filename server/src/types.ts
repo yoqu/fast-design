@@ -51,6 +51,8 @@ export type ChatMessage = {
   /** 有序片段；缺省（旧历史）由渲染层按 thinking→tools→content 合成。 */
   parts?: MessagePart[];
   attachments?: ChatAttachment[];
+  /** 本条用户消息引用的 skill 名（每条消息一次性，仅作 transcript 回显）。 */
+  skills?: string[];
   error?: string;
   createdAt: number;
 };
