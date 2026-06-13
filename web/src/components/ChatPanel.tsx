@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { api, piApi, streamChat, attachTurn } from '../lib/api';
-import type { ChatAttachment, ChatMessage, ConversationSummary, PiModel, ToolCall, UiEvent } from '../lib/types';
+import type { ChatAttachment, ChatMessage, ConversationSummary, PiModel, SkillRef, ToolCall, UiEvent } from '../lib/types';
 import { deriveGenerationModel, type GenerationInput, type GenerationModel } from '../lib/generation';
-import { appendPartText, rollbackParts } from '../lib/messageParts';
+import { appendPartText, rollbackParts, writtenFilePath } from '../lib/messageParts';
 import Composer, { type ComposerSeed } from './Composer';
 import MessageView from './MessageView';
 import ConversationsMenu from './ConversationsMenu';
@@ -52,16 +52,6 @@ type Props = {
   onTurnEnd?: () => void;
 };
 
-const WRITE_TOOL_RE = /write|edit|patch|create/i;
-
-function writtenFileFrom(name: string | null, input: unknown): string | null {
-  if (!name || !WRITE_TOOL_RE.test(name)) return null;
-  if (!input || typeof input !== 'object') return null;
-  const record = input as Record<string, unknown>;
-  const candidate = record.path ?? record.file_path ?? record.filename ?? record.file;
-  return typeof candidate === 'string' && candidate ? candidate.split('/').pop() ?? null : null;
-}
-
 export default function ChatPanel({ projectId, conversationId, conversations, projectName, onBack, onRenameProject, onSelectConversation, onCreateConversation, onRenameConversation, onDeleteConversation, projectModel, onSetConversationModel, onGeneration, retryRef, sendRef, onMessages, pendingPrompt, pendingAttachments, onConsumePendingPrompt, onTurnEnd }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
@@ -95,7 +85,7 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
     lastWrite: null,
     turnEnded: false,
   });
-  const lastUserInput = useRef<{ text: string; attachments: ChatAttachment[] } | null>(null);
+  const lastUserInput = useRef<{ text: string; attachments: ChatAttachment[]; skills: SkillRef[] } | null>(null);
   // 当前回合的流式请求控制器：卸载（切换会话/项目）时中断读流，
   // 防止旧回合的 finally 把共享的 generation 状态写给新会话。
   const streamAbort = useRef<AbortController | null>(null);
@@ -205,7 +195,7 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
                 parts: [...(m.parts ?? []), { kind: 'tool', toolIndex: tools.length - 1 }],
               };
             });
-            const written = writtenFileFrom(ev.name, ev.input);
+            const written = writtenFilePath(ev.name, ev.input)?.split('/').pop() ?? null;
             pushGeneration({ sawDelta: true, ...(written ? { lastWrite: written } : {}) });
             break;
           }
@@ -315,21 +305,31 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
   }, [messages]);
 
   const send = useCallback(
-    async (text: string, attachments: ChatAttachment[] = []) => {
-      lastUserInput.current = { text, attachments };
+    async (text: string, attachments: ChatAttachment[] = [], skills: SkillRef[] = []) => {
+      lastUserInput.current = { text, attachments, skills };
       setMessages((prev) => [
         ...prev,
         {
           role: 'user',
           content: text,
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...(skills.length > 0 ? { skills: skills.map((s) => s.name) } : {}),
           createdAt: Date.now(),
         },
         { role: 'assistant', content: '', createdAt: Date.now(), streaming: true },
       ]);
       const controller = new AbortController();
       await consumeTurn(
-        (onEvent) => streamChat(projectId, conversationId, text, onEvent, controller.signal, attachments),
+        (onEvent) =>
+          streamChat(
+            projectId,
+            conversationId,
+            text,
+            onEvent,
+            controller.signal,
+            attachments,
+            skills.map((s) => ({ scope: s.scope, rel: s.rel })),
+          ),
         controller,
       );
     },
@@ -340,7 +340,7 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
     if (!retryRef) return;
     retryRef.current = () => {
       const last = lastUserInput.current;
-      if (last && !generationInput.current.busy) void send(last.text, last.attachments);
+      if (last && !generationInput.current.busy) void send(last.text, last.attachments, last.skills);
     };
     return () => {
       retryRef.current = null;

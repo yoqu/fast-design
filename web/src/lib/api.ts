@@ -186,11 +186,16 @@ export async function streamChat(
   onEvent: (ev: UiEvent) => void,
   signal?: AbortSignal,
   attachments?: ChatAttachment[],
+  skills?: { scope: string; rel: string }[],
 ): Promise<void> {
   const res = await fetch(`/api/projects/${projectId}/conversations/${conversationId}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, ...(attachments?.length ? { attachments } : {}) }),
+    body: JSON.stringify({
+      message,
+      ...(attachments?.length ? { attachments } : {}),
+      ...(skills?.length ? { skills } : {}),
+    }),
     signal,
   });
   if (!res.ok || !res.body) {

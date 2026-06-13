@@ -5,6 +5,29 @@ import { readWebuiSettings, writeWebuiSettings } from './webui-settings.js';
 
 export type SkillScope = 'global' | 'project' | 'bundled';
 
+export type SkillRef = { scope: SkillScope; rel: string };
+
+const SKILL_SCOPES: SkillScope[] = ['global', 'project', 'bundled'];
+
+/** 校验客户端传来的 skill 引用：保留合法项，按 scope+rel 去重。 */
+export function sanitizeSkillRefs(input: unknown): SkillRef[] {
+  if (!Array.isArray(input)) return [];
+  const out: SkillRef[] = [];
+  const seen = new Set<string>();
+  for (const item of input) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const scope = rec.scope as SkillScope;
+    const rel = typeof rec.rel === 'string' ? rec.rel.trim() : '';
+    if (!SKILL_SCOPES.includes(scope) || !rel) continue;
+    const key = `${scope}:${rel}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ scope, rel });
+  }
+  return out;
+}
+
 export type SkillInfo = {
   name: string;
   description: string;
@@ -179,6 +202,34 @@ export function enabledSkillPaths(projectDir: string | null): string[] {
       const root = s.scope === 'bundled' ? bundledSkillsRoot() : projectSkillsRoot(projectDir!);
       return path.join(root, s.rel);
     });
+}
+
+export type ResolvedSkill = { path: string; name: string; description: string };
+
+/** 把 SkillRef[] 解析为技能目录绝对路径（含 name/description），缺失项静默跳过。 */
+export function resolveSkills(refs: SkillRef[], projectDir: string | null): ResolvedSkill[] {
+  if (refs.length === 0) return [];
+  const all = listSkills(projectDir);
+  const out: ResolvedSkill[] = [];
+  for (const ref of refs) {
+    const info = all.find((s) => s.scope === ref.scope && s.rel === ref.rel);
+    if (!info) continue;
+    let root: string;
+    try {
+      root = skillsRoot(ref.scope, projectDir);
+    } catch {
+      continue;
+    }
+    out.push({ path: path.join(root, info.rel), name: info.name, description: info.description });
+  }
+  return out;
+}
+
+/** 本回合引用的 skill → 注入 agent 的引导指令；空列表返回空串。 */
+export function skillReferenceDirective(skills: { name: string; description: string }[]): string {
+  if (skills.length === 0) return '';
+  const lines = skills.map((s) => `- ${s.name}：${s.description}`);
+  return `本回合请优先使用以下 skill（已为你加载，可直接调用）：\n${lines.join('\n')}`;
 }
 
 // ---- 启用/禁用 ----
