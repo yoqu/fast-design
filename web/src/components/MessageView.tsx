@@ -2,9 +2,9 @@ import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../lib/api';
 import type { ChatAttachment, ChatMessage, MessagePart, ToolCall } from '../lib/types';
-import { activityToolCount, groupMessageParts, messageParts, toolSummary } from '../lib/messageParts';
+import { activityToolCount, groupMessageParts, messageParts, summarizeTools, toolSummary, writtenFilePath } from '../lib/messageParts';
 import { splitOnQuestionForms, stripTrailingOpenQuestionForm } from '../lib/questionForm';
-import { BrainIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, CircleCheckIcon, CircleXIcon, CopyIcon, FileIcon, ListTodoIcon, LoaderIcon, TriangleAlertIcon, WrenchIcon } from './icons';
+import { BrainIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, CircleCheckIcon, CircleXIcon, CopyIcon, ExternalLinkIcon, FileIcon, ListTodoIcon, LoaderIcon, SparklesIcon, TriangleAlertIcon, WrenchIcon } from './icons';
 
 /** 取消息可复制的纯文本：用户取原文，助手拼接全部文本片段（不含工具/思考）。 */
 function messagePlainText(message: ChatMessage): string {
@@ -138,6 +138,86 @@ function ToolCallCard({ tool, defaultOpen = false }: { tool: ToolCall; defaultOp
   );
 }
 
+type TodoItem = { content: string; status?: string };
+
+function parseTodos(input: unknown): TodoItem[] | null {
+  if (!input || typeof input !== 'object') return null;
+  const todos = (input as Record<string, unknown>).todos;
+  if (!Array.isArray(todos)) return null;
+  const out: TodoItem[] = [];
+  for (const t of todos) {
+    if (!t || typeof t !== 'object') continue;
+    const rec = t as Record<string, unknown>;
+    const content = typeof rec.content === 'string' ? rec.content : typeof rec.text === 'string' ? rec.text : '';
+    if (!content) continue;
+    const status = typeof rec.status === 'string' ? rec.status : typeof rec.state === 'string' ? rec.state : undefined;
+    out.push({ content, status });
+  }
+  return out.length > 0 ? out : null;
+}
+
+function TodoCard({ tool }: { tool: ToolCall }) {
+  const todos = parseTodos(tool.input);
+  if (!todos) return <ToolCallCard tool={tool} />;
+  const done = (s?: string) => s === 'completed' || s === 'done';
+  const active = (s?: string) => s === 'in_progress' || s === 'active' || s === 'doing';
+  return (
+    <div className="my-1 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-2 text-xs">
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-zinc-500">
+        <ListTodoIcon size={13} className="text-zinc-400" />
+        待办清单
+      </div>
+      <ul className="space-y-1">
+        {todos.map((t, i) => (
+          <li key={i} className="flex items-start gap-1.5">
+            {done(t.status) ? (
+              <CircleCheckIcon size={13} className="mt-0.5 shrink-0 text-emerald-600" />
+            ) : active(t.status) ? (
+              <LoaderIcon size={13} className="mt-0.5 shrink-0 animate-spin text-zinc-400" />
+            ) : (
+              <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full border border-zinc-300" />
+            )}
+            <span className={done(t.status) ? 'text-zinc-400 line-through' : 'text-zinc-700'}>{t.content}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function FileChip({ tool, projectId }: { tool: ToolCall; projectId: string }) {
+  const full = writtenFilePath(tool.name, tool.input);
+  if (!full) return <ToolCallCard tool={tool} />;
+  const base = full.split('/').pop() ?? full;
+  const pending = tool.result === undefined;
+  return (
+    <a
+      href={api.fileUrl(projectId, full)}
+      target="_blank"
+      rel="noreferrer"
+      title={full}
+      className="my-1 flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-700 hover:border-zinc-400"
+    >
+      {pending ? (
+        <LoaderIcon size={13} className="shrink-0 animate-spin text-zinc-400" />
+      ) : tool.isError ? (
+        <CircleXIcon size={13} className="shrink-0 text-red-500" />
+      ) : (
+        <FileIcon size={14} className="shrink-0 text-zinc-400" />
+      )}
+      <span className="min-w-0 truncate font-medium">{base}</span>
+      <ExternalLinkIcon size={12} className="ml-auto shrink-0 text-zinc-300" />
+    </a>
+  );
+}
+
+/** 单个工具按类型选渲染形态：待办→清单卡，写文件→文档 chip，其余→通用卡。 */
+function ToolCell({ tool, projectId, defaultOpen }: { tool: ToolCall; projectId: string; defaultOpen?: boolean }) {
+  if (tool.name && /todo/i.test(tool.name) && parseTodos(tool.input)) return <TodoCard tool={tool} />;
+  if (writtenFilePath(tool.name, tool.input)) return <FileChip tool={tool} projectId={projectId} />;
+  return <ToolCallCard tool={tool} defaultOpen={defaultOpen} />;
+}
+
 /**
  * 活动块（Codex work log 语义）：一段连续的工作片段（工具调用 + 思考 +
  * 步骤间短叙述）默认收起成一行摘要——进行中显示当前动作，结束后显示步数；
@@ -149,12 +229,14 @@ function ActivityBlock({
   tools,
   streaming,
   isLast,
+  projectId,
 }: {
   parts: MessagePart[];
   tools: ToolCall[];
   streaming?: boolean;
   /** 是否消息的最后一个块（思考中提示只对最新块显示）。 */
   isLast?: boolean;
+  projectId: string;
 }) {
   const [open, setOpen] = useState(false);
   const toolCount = activityToolCount(parts);
@@ -167,7 +249,7 @@ function ActivityBlock({
   // 单个工具、无伴随叙述：直接平铺一张卡（Codex 单 cell 形态）。
   if (parts.length === 1 && parts[0].kind === 'tool') {
     const tool = tools[parts[0].toolIndex];
-    return tool ? <ToolCallCard tool={tool} /> : null;
+    return tool ? <ToolCell tool={tool} projectId={projectId} /> : null;
   }
 
   const toolOf = (p: MessagePart) => (p.kind === 'tool' ? tools[p.toolIndex] : undefined);
@@ -182,6 +264,10 @@ function ActivityBlock({
       : errors > 0
         ? `${errors} 步失败`
         : '';
+  const blockTools = parts.map(toolOf).filter((t): t is ToolCall => !!t);
+  const summary = summarizeTools(blockTools)
+    .map((s) => (s.count > 1 ? `${s.verb} ×${s.count}` : s.verb))
+    .join(' · ');
 
   return (
     <div className="my-1 rounded-lg border border-zinc-200 bg-zinc-50 text-xs">
@@ -200,10 +286,8 @@ function ActivityBlock({
           )}
         </span>
         <WrenchIcon size={12} className="text-zinc-400" />
-        <span className="shrink-0 font-medium text-zinc-700">
-          {running ? `执行中 · ${toolCount} 步` : `执行了 ${toolCount} 步操作`}
-        </span>
-        <span className="truncate font-mono text-zinc-400">{hint}</span>
+        <span className="shrink-0 font-medium text-zinc-700">{running ? '执行中' : '已执行'}</span>
+        <span className="truncate text-zinc-400">{running && hint ? hint : summary}</span>
         <span className="ml-auto text-zinc-400">{open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}</span>
       </button>
       {open && (
@@ -211,7 +295,7 @@ function ActivityBlock({
           {parts.map((p, i) => {
             if (p.kind === 'tool') {
               const tool = tools[p.toolIndex];
-              return tool ? <ToolCallCard key={`tool-${p.toolIndex}`} tool={tool} defaultOpen /> : null;
+              return tool ? <ToolCell key={`tool-${p.toolIndex}`} tool={tool} projectId={projectId} defaultOpen /> : null;
             }
             if (p.kind === 'thinking') {
               return (
@@ -304,6 +388,19 @@ export default function MessageView({ message, projectId }: { message: ChatMessa
         {message.attachments && message.attachments.length > 0 && (
           <AttachmentList attachments={message.attachments} projectId={projectId} />
         )}
+        {message.skills && message.skills.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
+            {message.skills.map((name, i) => (
+              <span
+                key={i}
+                className="flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700"
+              >
+                <SparklesIcon size={11} className="text-violet-400" />
+                {name}
+              </span>
+            ))}
+          </div>
+        )}
         <CopyButton text={messagePlainText(message)} align="right" />
       </div>
     );
@@ -331,6 +428,7 @@ export default function MessageView({ message, projectId }: { message: ChatMessa
             tools={tools}
             streaming={message.streaming}
             isLast={i === blocks.length - 1}
+            projectId={projectId}
           />
         ),
       )}
