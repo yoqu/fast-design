@@ -5,6 +5,8 @@ import {
   groupMessageParts,
   messageParts,
   rollbackParts,
+  summarizeTools,
+  writtenFilePath,
 } from './messageParts';
 import type { ChatMessage, MessagePart } from './types';
 
@@ -102,5 +104,35 @@ describe('groupMessageParts', () => {
 
   it('空白文本不产生空段', () => {
     expect(groupMessageParts([{ kind: 'text', text: '  \n ' }])).toEqual([]);
+  });
+});
+
+describe('summarizeTools', () => {
+  it('按工具类型映射动词并计数，保持首次出现顺序', () => {
+    const t = (name: string) => ({ id: null, name, input: {} });
+    const out = summarizeTools([
+      t('Read'), t('Read'), t('Grep'), t('Write'), t('Read'), t('TodoWrite'), t('Edit'),
+    ]);
+    expect(out).toEqual([
+      { verb: '读取', count: 3 },
+      { verb: '搜索', count: 1 },
+      { verb: '写入', count: 1 },
+      { verb: '更新待办', count: 1 },
+      { verb: '编辑', count: 1 },
+    ]);
+  });
+  it('未知工具名原样作为动词', () => {
+    expect(summarizeTools([{ id: null, name: 'Frobnicate', input: {} }])).toEqual([
+      { verb: 'Frobnicate', count: 1 },
+    ]);
+  });
+});
+
+describe('writtenFilePath', () => {
+  it('写类工具取 path/file_path，非写类返回 null', () => {
+    expect(writtenFilePath('Write', { path: 'a/b.html' })).toBe('a/b.html');
+    expect(writtenFilePath('Edit', { file_path: 'c.css' })).toBe('c.css');
+    expect(writtenFilePath('Read', { path: 'a/b.html' })).toBeNull();
+    expect(writtenFilePath(null, { path: 'x' })).toBeNull();
   });
 });

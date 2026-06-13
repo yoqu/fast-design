@@ -94,6 +94,46 @@ export function activityToolCount(parts: MessagePart[]): number {
   return parts.filter((p) => p.kind === 'tool').length;
 }
 
+/** 写类工具（含 path 字段）→ 项目内相对路径；非写类或无路径返回 null。 */
+const WRITE_TOOL_RE = /write|edit|patch|create/i;
+export function writtenFilePath(name: string | null, input: unknown): string | null {
+  if (!name || !WRITE_TOOL_RE.test(name)) return null;
+  if (!input || typeof input !== 'object') return null;
+  const rec = input as Record<string, unknown>;
+  const candidate = rec.path ?? rec.file_path ?? rec.filename ?? rec.file;
+  return typeof candidate === 'string' && candidate ? candidate : null;
+}
+
+/** 工具名 → 中文动词（按序匹配，todo 须先于 write）。 */
+const TOOL_VERBS: Array<[RegExp, string]> = [
+  [/todo/i, '更新待办'],
+  [/multi.?edit|edit|patch/i, '编辑'],
+  [/write|create/i, '写入'],
+  [/read/i, '读取'],
+  [/glob|grep|search|find/i, '搜索'],
+  [/copy/i, '复制'],
+  [/delete|remove|\brm\b/i, '删除'],
+  [/bash|shell|exec|\brun\b/i, '运行'],
+];
+
+function toolVerb(name: string | null): string {
+  if (!name) return '操作';
+  for (const [re, verb] of TOOL_VERBS) if (re.test(name)) return verb;
+  return name;
+}
+
+/** 把一组工具按动词归并计数，保持首次出现顺序（活动块折叠摘要用）。 */
+export function summarizeTools(tools: ToolCall[]): Array<{ verb: string; count: number }> {
+  const order: string[] = [];
+  const counts = new Map<string, number>();
+  for (const t of tools) {
+    const verb = toolVerb(t.name);
+    if (!counts.has(verb)) order.push(verb);
+    counts.set(verb, (counts.get(verb) ?? 0) + 1);
+  }
+  return order.map((verb) => ({ verb, count: counts.get(verb)! }));
+}
+
 /** 工具调用的一行式摘要（动作目标：路径/命令等）。 */
 export function toolSummary(tool: ToolCall): string {
   const input = tool.input as Record<string, unknown> | null;
