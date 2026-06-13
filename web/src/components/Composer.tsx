@@ -352,7 +352,7 @@ export default function Composer({ projectId, busy, seed, models, model, project
             ))}
           </div>
         )}
-        <div className="flex items-end gap-2">
+        <div className="flex flex-col gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -363,72 +363,6 @@ export default function Composer({ projectId, busy, seed, models, model, project
               e.target.value = '';
             }}
           />
-          <button
-            type="button"
-            title="添加附件"
-            aria-label="添加附件"
-            onClick={() => fileInputRef.current?.click()}
-            className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-          >
-            <PaperclipIcon size={16} />
-          </button>
-          <div className="relative" ref={modelMenuRef}>
-            <button
-              type="button"
-              title={model ? `模型：${model}（仅当前会话）` : `模型：跟随项目设置${projectModel ? `（${projectModel}）` : ''}`}
-              aria-label="切换模型"
-              aria-haspopup="menu"
-              aria-expanded={modelMenuOpen}
-              disabled={busy}
-              onClick={() => setModelMenuOpen((v) => !v)}
-              className={`flex max-w-36 items-center gap-1 rounded-lg px-2 py-2 text-xs disabled:opacity-40 ${
-                modelMenuOpen ? 'bg-zinc-100 text-zinc-700' : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700'
-              }`}
-            >
-              <span className="truncate">{model ? modelShortName(model) : '默认'}</span>
-              <ChevronDownIcon size={12} className="shrink-0" />
-            </button>
-            {modelMenuOpen && (
-              <div
-                role="menu"
-                className="absolute bottom-full left-0 z-20 mb-1.5 max-h-72 w-64 overflow-y-auto rounded-xl border border-zinc-200 bg-white py-1 shadow-lg"
-              >
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={model === null}
-                  onClick={() => pickModel(null)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-zinc-50"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-zinc-800">跟随项目设置</div>
-                    <div className="truncate text-[10px] text-zinc-400">{projectModel ?? '全局默认'}</div>
-                  </div>
-                  {model === null && <CheckIcon size={13} className="shrink-0 text-zinc-600" />}
-                </button>
-                {models.length > 0 && <div className="my-1 border-t border-zinc-100" />}
-                {models.map((m) => {
-                  const id = `${m.provider}/${m.id}`;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={model === id}
-                      onClick={() => pickModel(id)}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-zinc-50"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-zinc-800">{m.id}</div>
-                        <div className="truncate text-[10px] text-zinc-400">{m.provider}</div>
-                      </div>
-                      {model === id && <CheckIcon size={13} className="shrink-0 text-zinc-600" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
           <textarea
             ref={textareaRef}
             value={value}
@@ -457,26 +391,96 @@ export default function Composer({ projectId, busy, seed, models, model, project
                 addFiles(files);
               }
             }}
-            rows={Math.min(6, Math.max(1, value.split('\n').length))}
+            rows={Math.min(12, Math.max(3, value.split('\n').length))}
             placeholder="描述你想开发的页面…（@ 引用文件，Enter 发送，Shift+Enter 换行）"
-            className="max-h-40 flex-1 resize-none bg-transparent px-1.5 py-1 text-sm outline-none"
+            className="max-h-72 w-full resize-none bg-transparent px-1.5 py-1 text-sm outline-none"
           />
-          {busy ? (
+          {/* 底部工具栏：附件 / 模型在左，发送在右 */}
+          <div className="flex items-center gap-1">
             <button
-              onClick={onStop}
-              className="rounded-lg bg-red-500 px-3.5 py-1.5 text-sm text-white hover:bg-red-600"
+              type="button"
+              title="添加附件"
+              aria-label="添加附件"
+              onClick={() => fileInputRef.current?.click()}
+              className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
             >
-              停止
+              <PaperclipIcon size={16} />
             </button>
-          ) : (
-            <button
-              onClick={send}
-              disabled={!canSend}
-              className="rounded-lg bg-zinc-800 px-3.5 py-1.5 text-sm text-white hover:bg-zinc-700 disabled:opacity-40"
-            >
-              发送
-            </button>
-          )}
+            <div className="relative" ref={modelMenuRef}>
+              <button
+                type="button"
+                title={model ? `模型：${model}（仅当前会话）` : `模型：跟随项目设置${projectModel ? `（${projectModel}）` : ''}`}
+                aria-label="切换模型"
+                aria-haspopup="menu"
+                aria-expanded={modelMenuOpen}
+                disabled={busy}
+                onClick={() => setModelMenuOpen((v) => !v)}
+                className={`flex max-w-36 items-center gap-1 rounded-lg px-2 py-2 text-xs disabled:opacity-40 ${
+                  modelMenuOpen ? 'bg-zinc-100 text-zinc-700' : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700'
+                }`}
+              >
+                <span className="truncate">{model ? modelShortName(model) : '默认'}</span>
+                <ChevronDownIcon size={12} className="shrink-0" />
+              </button>
+              {modelMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute bottom-full left-0 z-20 mb-1.5 max-h-72 w-64 overflow-y-auto rounded-xl border border-zinc-200 bg-white py-1 shadow-lg"
+                >
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={model === null}
+                    onClick={() => pickModel(null)}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-zinc-50"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-zinc-800">跟随项目设置</div>
+                      <div className="truncate text-[10px] text-zinc-400">{projectModel ?? '全局默认'}</div>
+                    </div>
+                    {model === null && <CheckIcon size={13} className="shrink-0 text-zinc-600" />}
+                  </button>
+                  {models.length > 0 && <div className="my-1 border-t border-zinc-100" />}
+                  {models.map((m) => {
+                    const id = `${m.provider}/${m.id}`;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={model === id}
+                        onClick={() => pickModel(id)}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-zinc-50"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-zinc-800">{m.id}</div>
+                          <div className="truncate text-[10px] text-zinc-400">{m.provider}</div>
+                        </div>
+                        {model === id && <CheckIcon size={13} className="shrink-0 text-zinc-600" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="flex-1" />
+            {busy ? (
+              <button
+                onClick={onStop}
+                className="rounded-lg bg-red-500 px-3.5 py-1.5 text-sm text-white hover:bg-red-600"
+              >
+                停止
+              </button>
+            ) : (
+              <button
+                onClick={send}
+                disabled={!canSend}
+                className="rounded-lg bg-zinc-800 px-3.5 py-1.5 text-sm text-white hover:bg-zinc-700 disabled:opacity-40"
+              >
+                发送
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

@@ -12,10 +12,15 @@ import {
   type TextEditPlan,
 } from '../lib/textEdit';
 import {
+  CheckIcon,
+  CopyIcon,
   ExternalLinkIcon,
+  MaximizeIcon,
+  MinimizeIcon,
   MonitorIcon,
   PencilLineIcon,
   RefreshIcon,
+  ShareIcon,
   SmartphoneIcon,
   TabletIcon,
   UndoIcon,
@@ -114,6 +119,13 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const zoomMenuRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  // 分享 popover：打开时现取一个不带 bridge 参数的干净预览链接。
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
+  const shareMenuRef = useRef<HTMLDivElement | null>(null);
+  // 全屏：预览区铺满整个浏览器窗口（fixed 覆盖层），Esc 退出。
+  const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,6 +177,63 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [zoomMenuOpen]);
+
+  // 分享菜单点击外部关闭。
+  useEffect(() => {
+    if (!shareOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!shareMenuRef.current) return;
+      if (!shareMenuRef.current.contains(e.target as Node)) setShareOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [shareOpen]);
+
+  const toggleShare = useCallback(() => {
+    setShareOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setShareCopied(false);
+        setShareUrl(null);
+        api
+          .previewUrl(projectId, file)
+          .then((data) => setShareUrl(new URL(data.url, window.location.origin).href))
+          .catch(() => setShareUrl(null));
+      }
+      return next;
+    });
+  }, [projectId, file]);
+
+  const copyShareUrl = useCallback(async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+    } catch {
+      // 剪贴板权限被拒：降级用临时输入框。
+      const input = document.createElement('input');
+      input.value = shareUrl;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+    }
+    setShareCopied(true);
+    setTimeout(() => setShareCopied(false), 2000);
+  }, [shareUrl]);
+
+  // 切文件退出全屏；全屏中 Esc 退出。
+  useEffect(() => {
+    setFullscreen(false);
+  }, [projectId, file]);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFullscreen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
 
   useEffect(() => {
     const el = canvasRef.current;
@@ -351,7 +420,7 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
   const iframeKey = `${previewUrl ?? ''}:${frozenReloadKey}:${localReload}`;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className={fullscreen ? 'fixed inset-0 z-50 flex flex-col bg-white' : 'flex h-full flex-col'}>
       <div className="flex items-center gap-1 border-b border-zinc-200 bg-white px-2 py-1.5">
         <div className="flex items-center gap-0.5 rounded-lg bg-zinc-100 p-0.5">
           {PREVIEW_VIEWPORT_PRESETS.map((p) => (
@@ -400,9 +469,6 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
           ) : null}
         </div>
         <div className="flex-1" />
-        <span className="truncate text-xs text-zinc-400" title={file}>
-          {artifact?.manifest.title || file}
-        </span>
         {tweaksAvailable ? (
           <button
             type="button"
@@ -473,6 +539,63 @@ export function FileViewer({ projectId, file, artifact, files, reloadKey, genera
         >
           <ExternalLinkIcon size={14} />
         </button>
+        <button
+          type="button"
+          onClick={() => setFullscreen((v) => !v)}
+          title={fullscreen ? '退出全屏 (Esc)' : '全屏预览'}
+          aria-label={fullscreen ? '退出全屏' : '全屏预览'}
+          aria-pressed={fullscreen}
+          className={`rounded-md px-2 py-1 ${
+            fullscreen ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'
+          }`}
+        >
+          {fullscreen ? <MinimizeIcon size={14} /> : <MaximizeIcon size={14} />}
+        </button>
+        <div ref={shareMenuRef} className="relative">
+          <button
+            type="button"
+            onClick={toggleShare}
+            title="分享预览链接"
+            aria-expanded={shareOpen}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+          >
+            <ShareIcon size={13} />
+            分享
+          </button>
+          {shareOpen ? (
+            <div className="absolute right-0 top-full z-20 mt-1 w-72 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg">
+              <p className="text-xs font-medium text-zinc-700">分享预览</p>
+              <p className="mt-1 text-[11px] text-zinc-400">同一网络内打开此链接即可直接预览当前页面。</p>
+              {shareUrl ? (
+                <>
+                  <div className="mt-2 truncate rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-[11px] text-zinc-500" title={shareUrl}>
+                    {shareUrl}
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void copyShareUrl()}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-md bg-zinc-900 px-2 py-1.5 text-xs text-white hover:bg-zinc-700"
+                    >
+                      {shareCopied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+                      {shareCopied ? '已复制' : '复制链接'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-zinc-300 px-2 py-1.5 text-xs text-zinc-700 hover:bg-zinc-50"
+                    >
+                      <ExternalLinkIcon size={12} />
+                      打开预览
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p className="mt-2 text-xs text-zinc-400">生成链接中…</p>
+              )}
+            </div>
+          ) : null}
+        </div>
         <ExportMenu projectId={projectId} file={file} artifact={artifact} files={files} iframeRef={iframeRef} />
       </div>
       <div

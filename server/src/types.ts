@@ -33,11 +33,23 @@ export type ChatAttachment = {
   size: number;
 };
 
+/**
+ * 助手消息的有序片段（Codex transcript 语义）：text/thinking/tool 按事件
+ * 到达顺序记录，渲染层据此还原真实时间线。tool 片段只存 tools 数组下标，
+ * 不复制 ToolCall 本体。
+ */
+export type MessagePart =
+  | { kind: 'text'; text: string }
+  | { kind: 'thinking'; text: string }
+  | { kind: 'tool'; toolIndex: number };
+
 export type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   thinking?: string;
   tools?: ToolCall[];
+  /** 有序片段；缺省（旧历史）由渲染层按 thinking→tools→content 合成。 */
+  parts?: MessagePart[];
   attachments?: ChatAttachment[];
   error?: string;
   createdAt: number;

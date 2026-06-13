@@ -76,6 +76,48 @@ describe('foldTurnEvent', () => {
     foldTurnEvent(fold, { type: 'error', message: 'boom' });
     expect(finishTurnFold(fold).error).toBe('boom');
   });
+
+  it('parts 按到达顺序记录 text/thinking/tool 交错时间线', () => {
+    const fold = createTurnFold();
+    const events: UiEvent[] = [
+      { type: 'turn_start' },
+      { type: 'thinking_delta', delta: '想' },
+      { type: 'text_delta', delta: '先看' },
+      { type: 'text_delta', delta: '文件' },
+      { type: 'tool_use', id: 't1', name: 'read', input: { path: 'a' } },
+      { type: 'tool_result', toolUseId: 't1', content: 'ok', isError: false },
+      { type: 'text_delta', delta: '改好了' },
+    ];
+    for (const ev of events) foldTurnEvent(fold, ev);
+    const msg = finishTurnFold(fold);
+    expect(msg.parts).toEqual([
+      { kind: 'thinking', text: '想' },
+      { kind: 'text', text: '先看文件' },
+      { kind: 'tool', toolIndex: 0 },
+      { kind: 'text', text: '改好了' },
+    ]);
+    // 聚合字段保持原语义不变
+    expect(msg.content).toBe('先看文件改好了');
+    expect(msg.tools![0].result).toBe('ok');
+  });
+
+  it('retry 同步回滚 parts：截掉检查点后的片段与文本增量，tool 片段消失', () => {
+    const fold = createTurnFold();
+    const events: UiEvent[] = [
+      { type: 'turn_start' },
+      { type: 'text_delta', delta: '第一回合。' },
+      { type: 'turn_start' },
+      { type: 'text_delta', delta: '半截' },
+      { type: 'tool_use', id: 't1', name: 'bash', input: null },
+      { type: 'error', message: 'boom' },
+      { type: 'retry' },
+      { type: 'text_delta', delta: '第二回合。' },
+    ];
+    for (const ev of events) foldTurnEvent(fold, ev);
+    const msg = finishTurnFold(fold);
+    expect(msg.parts).toEqual([{ kind: 'text', text: '第一回合。第二回合。' }]);
+    expect(msg.content).toBe('第一回合。第二回合。');
+  });
 });
 
 describe('Turn', () => {

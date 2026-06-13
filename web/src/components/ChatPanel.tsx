@@ -3,10 +3,11 @@ import type { MutableRefObject } from 'react';
 import { api, piApi, streamChat, attachTurn } from '../lib/api';
 import type { ChatAttachment, ChatMessage, ConversationSummary, PiModel, ToolCall, UiEvent } from '../lib/types';
 import { deriveGenerationModel, type GenerationInput, type GenerationModel } from '../lib/generation';
+import { appendPartText, rollbackParts } from '../lib/messageParts';
 import Composer, { type ComposerSeed } from './Composer';
 import MessageView from './MessageView';
 import ConversationsMenu from './ConversationsMenu';
-import { ArrowLeftIcon } from './icons';
+import { ArrowLeftIcon, PencilIcon } from './icons';
 
 type Props = {
   projectId: string;
@@ -16,6 +17,8 @@ type Props = {
   projectName: string;
   /** 返回项目列表。 */
   onBack: () => void;
+  /** 重命名当前项目（顶部项目名内联编辑）。 */
+  onRenameProject?: (name: string) => void;
   onSelectConversation: (cid: string) => void;
   onCreateConversation: () => void;
   onRenameConversation: (cid: string, title: string) => void;
@@ -59,11 +62,23 @@ function writtenFileFrom(name: string | null, input: unknown): string | null {
   return typeof candidate === 'string' && candidate ? candidate.split('/').pop() ?? null : null;
 }
 
-export default function ChatPanel({ projectId, conversationId, conversations, projectName, onBack, onSelectConversation, onCreateConversation, onRenameConversation, onDeleteConversation, projectModel, onSetConversationModel, onGeneration, retryRef, sendRef, onMessages, pendingPrompt, pendingAttachments, onConsumePendingPrompt, onTurnEnd }: Props) {
+export default function ChatPanel({ projectId, conversationId, conversations, projectName, onBack, onRenameProject, onSelectConversation, onCreateConversation, onRenameConversation, onDeleteConversation, projectModel, onSetConversationModel, onGeneration, retryRef, sendRef, onMessages, pendingPrompt, pendingAttachments, onConsumePendingPrompt, onTurnEnd }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [models, setModels] = useState<PiModel[]>([]);
+  // 顶部项目名内联编辑
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const startRenameProject = useCallback(() => {
+    setNameDraft(projectName);
+    setEditingName(true);
+  }, [projectName]);
+  const commitRenameProject = useCallback(() => {
+    setEditingName(false);
+    const next = nameDraft.trim();
+    if (next && next !== projectName) onRenameProject?.(next);
+  }, [nameDraft, projectName, onRenameProject]);
   const conversationModel = conversations.find((c) => c.id === conversationId)?.model ?? null;
 
   useEffect(() => {
@@ -134,8 +149,9 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
       });
 
       // 回合检查点：pi 自动重试会把出错回合整个重发（见 server 端同名逻辑），
-      // 收到 retry 事件时回滚半截输出并清掉错误标记。
-      const checkpoint = { content: 0, thinking: 0 };
+      // 收到 retry 事件时回滚半截输出并清掉错误标记。parts 与 content 同步
+      // 回滚（检查点记录片段数 + 末位文本片段长度）。
+      const checkpoint = { content: 0, thinking: 0, partsLen: 0, partTextLen: 0 };
 
       const handleEvent = (ev: UiEvent) => {
         switch (ev.type) {
@@ -146,6 +162,9 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
             updateLast((m) => {
               checkpoint.content = m.content.length;
               checkpoint.thinking = m.thinking?.length ?? 0;
+              checkpoint.partsLen = m.parts?.length ?? 0;
+              const last = m.parts?.at(-1);
+              checkpoint.partTextLen = last && last.kind !== 'tool' ? last.text.length : 0;
               return m;
             });
             break;
@@ -156,23 +175,36 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
               ...(m.thinking !== undefined
                 ? { thinking: m.thinking.slice(0, checkpoint.thinking) }
                 : {}),
+              parts: rollbackParts(m.parts, checkpoint.partsLen, checkpoint.partTextLen),
               error: undefined,
             }));
             pushGeneration({ error: null });
             break;
           case 'text_delta':
-            updateLast((m) => ({ ...m, content: m.content + ev.delta }));
+            updateLast((m) => ({
+              ...m,
+              content: m.content + ev.delta,
+              parts: appendPartText(m.parts, 'text', ev.delta),
+            }));
             pushGeneration({ sawDelta: true, lastActivity: ev.delta });
             break;
           case 'thinking_delta':
-            updateLast((m) => ({ ...m, thinking: (m.thinking ?? '') + ev.delta }));
+            updateLast((m) => ({
+              ...m,
+              thinking: (m.thinking ?? '') + ev.delta,
+              parts: appendPartText(m.parts, 'thinking', ev.delta),
+            }));
             pushGeneration({ sawDelta: true, lastActivity: ev.delta });
             break;
           case 'tool_use': {
-            updateLast((m) => ({
-              ...m,
-              tools: [...(m.tools ?? []), { id: ev.id, name: ev.name, input: ev.input }],
-            }));
+            updateLast((m) => {
+              const tools = [...(m.tools ?? []), { id: ev.id, name: ev.name, input: ev.input }];
+              return {
+                ...m,
+                tools,
+                parts: [...(m.parts ?? []), { kind: 'tool', toolIndex: tools.length - 1 }],
+              };
+            });
             const written = writtenFileFrom(ev.name, ev.input);
             pushGeneration({ sawDelta: true, ...(written ? { lastWrite: written } : {}) });
             break;
@@ -351,9 +383,38 @@ export default function ChatPanel({ projectId, conversationId, conversations, pr
         >
           <ArrowLeftIcon size={15} />
         </button>
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800" title={projectName}>
-          {projectName}
-        </span>
+        {editingName ? (
+          <input
+            autoFocus
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={commitRenameProject}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                commitRenameProject();
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setEditingName(false);
+              }
+            }}
+            className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-1.5 py-0.5 text-sm font-medium text-zinc-800 outline-none focus:border-zinc-500"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={onRenameProject ? startRenameProject : undefined}
+            title={onRenameProject ? '点击编辑项目名称' : projectName}
+            className="group/name flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-0.5 text-left hover:bg-zinc-100 disabled:hover:bg-transparent"
+            disabled={!onRenameProject}
+          >
+            <span className="min-w-0 truncate text-sm font-medium text-zinc-800">{projectName}</span>
+            {onRenameProject && (
+              <PencilIcon size={12} className="shrink-0 text-zinc-400 opacity-0 transition-opacity group-hover/name:opacity-100" />
+            )}
+          </button>
+        )}
         <ConversationsMenu
           conversations={conversations}
           activeId={conversationId}

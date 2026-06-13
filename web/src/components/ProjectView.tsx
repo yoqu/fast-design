@@ -18,6 +18,7 @@ import {
   type QuestionForm,
 } from '../lib/questionForm';
 import { parseSubmittedAnswers } from './QuestionForm';
+import { decideRouteConversationSync } from '../lib/conversationRouteSync';
 import { navigate } from '../router';
 import type { ChatMessage, ConversationSummary, ProjectMeta } from '../lib/types';
 import ChatPanel from './ChatPanel';
@@ -66,6 +67,10 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
   const activeFileRef = useRef<string | null>(routeFileName);
   const activeConversationIdRef = useRef<string | null>(null);
   activeConversationIdRef.current = activeConversationId;
+  // 本视图最近写进 URL 的 cid / 已按外部导航处理过的路由 cid,
+  // 供路由→活动会话同步区分外部导航与本地切换(参照 1037/1918)。
+  const lastSyncedConversationIdRef = useRef<string | null>(null);
+  const lastSeenRouteConversationIdRef = useRef<string | null>(null);
 
   // 项目元数据;不存在则回项目列表。
   useEffect(() => {
@@ -111,13 +116,19 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadConversations]);
 
-  // 前进后退把 URL 的会话 id 带回来 → 切换活动会话。
+  // 前进后退把 URL 的会话 id 带回来 → 切换活动会话。守卫见
+  // decideRouteConversationSync:新建会话等本地切换后 URL 同步尚未追上时,
+  // 本效应曾拿着旧 cid 把活动会话翻回去(参照 1301-1319)。
   useEffect(() => {
-    if (
-      routeConversationId &&
-      routeConversationId !== activeConversationIdRef.current &&
-      conversations.some((c) => c.id === routeConversationId)
-    ) {
+    const decision = decideRouteConversationSync({
+      routeConversationId,
+      activeConversationId: activeConversationIdRef.current,
+      lastSyncedConversationId: lastSyncedConversationIdRef.current,
+      lastSeenRouteConversationId: lastSeenRouteConversationIdRef.current,
+      conversationIds: conversations.map((c) => c.id),
+    });
+    lastSeenRouteConversationIdRef.current = decision.lastSeenRouteConversationId;
+    if (decision.adopt && routeConversationId) {
       setActiveConversationId(routeConversationId);
     }
   }, [routeConversationId, conversations]);
@@ -125,6 +136,7 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
   // 活动会话变化 → 同步 URL(replace,同参照 ProjectView.tsx:4293-4301)。
   useEffect(() => {
     if (!activeConversationId) return;
+    lastSyncedConversationIdRef.current = activeConversationId;
     navigate(
       { kind: 'project', projectId, conversationId: activeConversationId, fileName: activeFileRef.current },
       { replace: true },
@@ -145,6 +157,13 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
 
   const createConversation = useCallback(async () => {
     const conv = await api.createConversation(projectId);
+    // 抢在路由同步效应之前把新会话 id 写进 URL,避免它拿着旧 cid
+    // 把活动会话翻回去(同参照 4283-4301 的同步 navigate)。
+    lastSyncedConversationIdRef.current = conv.id;
+    navigate(
+      { kind: 'project', projectId, conversationId: conv.id, fileName: activeFileRef.current },
+      { replace: true },
+    );
     await loadConversations(conv.id);
   }, [projectId, loadConversations]);
 
@@ -179,6 +198,21 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
     [projectId, loadConversations],
   );
 
+  const renameProject = useCallback(
+    async (name: string) => {
+      // 乐观更新顶部项目名，失败回滚。
+      const prev = meta;
+      setMeta((m) => (m ? { ...m, name } : m));
+      try {
+        const updated = await api.updateProject(projectId, { name });
+        setMeta(updated);
+      } catch {
+        setMeta(prev);
+      }
+    },
+    [projectId, meta],
+  );
+
   const consumePendingPrompt = useCallback(async () => {
     setMeta((m) => (m ? { ...m, pendingPrompt: null, pendingAttachments: null } : m));
     try {
@@ -191,6 +225,19 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
   const handleMessages = useCallback((msgs: ChatMessage[]) => {
     setMessages(msgs);
   }, []);
+
+  // 回合结束刷新会话列表（取回自动生成的标题）；标题尚未就绪（首回合
+  // 极快结束时 AI 总结可能慢半拍）则延迟再拉一次。
+  const handleTurnEnd = useCallback(() => {
+    void loadConversations()
+      .then((list) => {
+        const cur = list.find((c) => c.id === activeConversationIdRef.current);
+        if (cur && !cur.title) {
+          window.setTimeout(() => void loadConversations().catch(() => {}), 5000);
+        }
+      })
+      .catch(() => {});
+  }, [loadConversations]);
 
   // ---- 问卷派生（对齐参照 ProjectView.tsx:1086-1150）----
   // 表单取自最后一条助手消息；仅当它是最新回合且用户尚未回答时可交互
@@ -378,6 +425,7 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
               conversations={conversations}
               projectName={meta?.name ?? ''}
               onBack={onBack}
+              onRenameProject={(name) => void renameProject(name)}
               onSelectConversation={setActiveConversationId}
               onCreateConversation={() => void createConversation()}
               onRenameConversation={(cid, title) => void renameConversation(cid, title)}
@@ -388,6 +436,7 @@ export default function ProjectView({ projectId, routeConversationId, routeFileN
               retryRef={retryRef}
               sendRef={sendRef}
               onMessages={handleMessages}
+              onTurnEnd={handleTurnEnd}
               pendingPrompt={meta?.pendingPrompt ?? null}
               pendingAttachments={meta?.pendingAttachments ?? null}
               onConsumePendingPrompt={consumePendingPrompt}

@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { ServerResponse } from 'node:http';
 import { appendConversationHistory, getConversation } from './conversations.js';
 import { listProjects, projectDir } from './projects.js';
-import type { ChatMessage, ToolCall, UiEvent } from './types.js';
+import type { ChatMessage, MessagePart, ToolCall, UiEvent } from './types.js';
 
 /** 进行中回合的事件日志目录（journal 写穿落盘，server 重启后恢复用）。 */
 export function turnsDir(projectId: string): string {
@@ -21,40 +22,63 @@ export function turnJournalPath(projectId: string, cid: string): string {
 export type TurnFold = {
   assistant: ChatMessage;
   tools: ToolCall[];
-  checkpoint: { content: number; thinking: number };
+  /** 有序片段（text/thinking/tool 按到达顺序），渲染层据此还原时间线。 */
+  parts: MessagePart[];
+  checkpoint: { content: number; thinking: number; partsLen: number; partTextLen: number };
 };
 
 export function createTurnFold(): TurnFold {
   return {
     assistant: { role: 'assistant', content: '', createdAt: Date.now() },
     tools: [],
-    checkpoint: { content: 0, thinking: 0 },
+    parts: [],
+    checkpoint: { content: 0, thinking: 0, partsLen: 0, partTextLen: 0 },
   };
+}
+
+function appendPartText(parts: MessagePart[], kind: 'text' | 'thinking', delta: string): void {
+  const last = parts.at(-1);
+  if (last && last.kind === kind) last.text += delta;
+  else parts.push({ kind, text: delta });
 }
 
 /** 在线流式与重启恢复共用的折叠函数（自 chat 路由的累积器搬入）。 */
 export function foldTurnEvent(fold: TurnFold, ev: UiEvent): void {
-  const { assistant, tools, checkpoint } = fold;
+  const { assistant, tools, parts, checkpoint } = fold;
   switch (ev.type) {
-    case 'turn_start':
+    case 'turn_start': {
       checkpoint.content = assistant.content.length;
       checkpoint.thinking = assistant.thinking?.length ?? 0;
+      checkpoint.partsLen = parts.length;
+      const last = parts.at(-1);
+      checkpoint.partTextLen = last && last.kind !== 'tool' ? last.text.length : 0;
       break;
-    case 'retry':
+    }
+    case 'retry': {
       assistant.content = assistant.content.slice(0, checkpoint.content);
       if (assistant.thinking !== undefined) {
         assistant.thinking = assistant.thinking.slice(0, checkpoint.thinking);
       }
+      // parts 同步回滚（检查点时最后一个文本片段可能在之后继续增长，截回去）。
+      // tools 数组有意不回滚：toolIndex 引用保持有效，被回滚的调用不再有片段
+      // 指向它，自然从时间线消失。
+      parts.length = checkpoint.partsLen;
+      const last = parts.at(-1);
+      if (last && last.kind !== 'tool') last.text = last.text.slice(0, checkpoint.partTextLen);
       delete assistant.error;
       break;
+    }
     case 'text_delta':
       assistant.content += ev.delta;
+      appendPartText(parts, 'text', ev.delta);
       break;
     case 'thinking_delta':
       assistant.thinking = (assistant.thinking ?? '') + ev.delta;
+      appendPartText(parts, 'thinking', ev.delta);
       break;
     case 'tool_use':
       tools.push({ id: ev.id, name: ev.name, input: ev.input });
+      parts.push({ kind: 'tool', toolIndex: tools.length - 1 });
       break;
     case 'tool_result': {
       const call = tools.find((t) => t.id === ev.toolUseId && t.result === undefined) ?? tools.at(-1);
@@ -72,6 +96,7 @@ export function foldTurnEvent(fold: TurnFold, ev: UiEvent): void {
 
 export function finishTurnFold(fold: TurnFold): ChatMessage {
   if (fold.tools.length > 0) fold.assistant.tools = fold.tools;
+  if (fold.parts.length > 0) fold.assistant.parts = fold.parts;
   return fold.assistant;
 }
 
@@ -166,6 +191,25 @@ export class Turn {
     }
     return finishTurnFold(this.fold);
   }
+}
+
+/**
+ * 把一个回合的事件以 NDJSON 流写给 HTTP 响应:同步回放已缓冲事件并续流,
+ * done 到达时结束响应;客户端断开仅退订(回合与连接解耦,后台继续跑完)。
+ */
+export function pipeTurnToResponse(turn: Turn, res: ServerResponse): void {
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.flushHeaders();
+  const unsubscribe = turn.subscribe((ev) => {
+    res.write(`${JSON.stringify(ev)}\n`);
+    if (ev.type === 'done') res.end();
+  });
+  // 必须挂 res 而不是 req:Node ≥16 里请求体被 json 中间件读完后,req 的
+  // 'close' 随消息完成立即触发(不只是客户端断开),挂 req 会让订阅刚建立
+  // 就被退订,客户端整回合收不到任何事件。res 的 'close' 只在底层连接
+  // 关闭(断开或响应结束)时触发;正常结束后重复退订是无害幂等。
+  res.on('close', unsubscribe);
 }
 
 const turns = new Map<string, Turn>();

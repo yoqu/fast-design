@@ -8,11 +8,10 @@ import { api, subscribeProjectEvents } from '../lib/api';
 import { FileViewer } from './FileViewer';
 import { FilesPanel } from './FilesPanel';
 import { GenerationStage } from './GenerationStage';
-import ProjectSettingsDialog from './ProjectSettingsDialog';
-import HandoffButton from './HandoffButton';
+import ProjectSettingsMenu from './ProjectSettingsDialog';
 import QuestionsPanel from './QuestionsPanel';
 import WorkingDirPill from './WorkingDirPill';
-import { LayoutGridIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, SettingsIcon, XIcon } from './icons';
+import { FolderIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, XIcon } from './icons';
 
 type Props = {
   projectId: string;
@@ -70,8 +69,8 @@ function loadTabState(projectId: string): TabState {
  */
 export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated, focusMode, onFocusModeChange, interactionDisabled, routeFileName, onActiveFileChange, questionForm, questionFormKey, questionFormInteractive, questionFormSubmitDisabled, questionFormSubmittedAnswers, questionsGenerating, onSubmitQuestions }: Props) {
   const [{ tabs, active }, setTabState] = useState<TabState>(() => loadTabState(projectId));
-  const [showFiles, setShowFiles] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  // 「设计文件」是固定的默认 tab：无恢复的文件标签时它就是活动 tab。
+  const [showFiles, setShowFiles] = useState(() => loadTabState(projectId).active == null);
   const [showQuestions, setShowQuestions] = useState(false);
   const [handoff, setHandoff] = useState<HandoffInfo | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -80,9 +79,10 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
   const knownEntries = useRef<Set<string> | null>(null);
 
   useEffect(() => {
-    setTabState(loadTabState(projectId));
+    const state = loadTabState(projectId);
+    setTabState(state);
     knownEntries.current = null;
-    setShowFiles(false);
+    setShowFiles(state.active == null);
     // 清掉上个项目的 handoff 信息,避免新项目顶栏短暂显示旧目录。
     setHandoff(null);
   }, [projectId]);
@@ -207,10 +207,25 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
         </button>
         <WorkingDirPill projectId={projectId} dir={handoff?.dir ?? null} />
         <div className="flex-1" />
-        <HandoffButton projectId={projectId} dir={handoff?.dir ?? null} editors={handoff?.editors ?? []} />
       </div>
       <div className="flex items-center gap-0.5 border-b border-zinc-200 bg-zinc-50 px-1.5 pt-1.5">
         <div className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto">
+          {/* 固定的默认 tab：设计文件（文件树），不可关闭。 */}
+          <button
+            type="button"
+            onClick={() => {
+              setShowFiles(true);
+              setShowQuestions(false);
+            }}
+            className={`flex shrink-0 items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 py-1.5 text-xs ${
+              !showQuestions && (showFiles || !active)
+                ? 'border-zinc-200 bg-white text-zinc-900'
+                : 'border-transparent text-zinc-500 hover:bg-zinc-100'
+            }`}
+          >
+            <FolderIcon size={13} className="shrink-0" />
+            设计文件
+          </button>
           {tabs.map((tab) => {
             const name = tab.slice(tab.lastIndexOf('/') + 1);
             const isActive = !showFiles && !showQuestions && tab === active;
@@ -261,24 +276,10 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
             问题
           </button>
         )}
-        <button
-          type="button"
-          onClick={() => { setShowFiles((v) => !v); setShowQuestions(false); }}
-          className={`mb-1 shrink-0 rounded-md px-2 py-1 text-xs ${
-            showFiles ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'
-          }`}
-        >
-          文件
-        </button>
         {meta && onMetaUpdated && (
-          <button
-            type="button"
-            onClick={() => setShowSettings(true)}
-            title="项目设置"
-            className="mb-1 shrink-0 rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-          >
-            <SettingsIcon size={15} />
-          </button>
+          <div className="mb-1 shrink-0">
+            <ProjectSettingsMenu meta={meta} onSaved={onMetaUpdated} />
+          </div>
         )}
       </div>
       <div className={`relative min-h-0 flex-1 bg-white ${interactionDisabled ? 'pointer-events-none select-none' : ''}`}>
@@ -292,15 +293,7 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
             generating={questionsGenerating ?? false}
             onSubmit={(text) => onSubmitQuestions?.(text)}
           />
-        ) : showFiles ? (
-          <FilesPanel
-            projectId={projectId}
-            files={files}
-            artifacts={artifacts}
-            onOpenFile={openTab}
-            onChanged={() => void refresh()}
-          />
-        ) : active ? (
+        ) : !showFiles && active ? (
           <FileViewer
             projectId={projectId}
             file={active}
@@ -310,22 +303,21 @@ export function Workspace({ projectId, generation, onRetry, meta, onMetaUpdated,
             generation={generation}
             onRetry={onRetry}
           />
-        ) : (
+        ) : stageVisible && tabs.length === 0 ? (
+          // 首次生成尚无任何文件标签：默认 tab 区域整体作为生成舞台。
           <div className="relative flex h-full flex-col items-center justify-center text-zinc-400">
-            {stageVisible ? (
-              <GenerationStage model={generation} onRetry={onRetry} />
-            ) : (
-              <>
-                <LayoutGridIcon size={40} className="text-zinc-300" />
-                <p className="mt-3 text-sm">在左侧对话生成原型,完成后会自动在这里打开预览</p>
-              </>
-            )}
+            <GenerationStage model={generation} onRetry={onRetry} />
           </div>
+        ) : (
+          <FilesPanel
+            projectId={projectId}
+            files={files}
+            artifacts={artifacts}
+            onOpenFile={openTab}
+            onChanged={() => void refresh()}
+          />
         )}
       </div>
-      {showSettings && meta && onMetaUpdated && (
-        <ProjectSettingsDialog meta={meta} onClose={() => setShowSettings(false)} onSaved={onMetaUpdated} />
-      )}
     </div>
   );
 }

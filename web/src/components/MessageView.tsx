@@ -1,9 +1,62 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../lib/api';
-import type { ChatAttachment, ChatMessage, ToolCall } from '../lib/types';
+import type { ChatAttachment, ChatMessage, MessagePart, ToolCall } from '../lib/types';
+import { activityToolCount, groupMessageParts, messageParts, toolSummary } from '../lib/messageParts';
 import { splitOnQuestionForms, stripTrailingOpenQuestionForm } from '../lib/questionForm';
-import { BrainIcon, ChevronDownIcon, ChevronRightIcon, CircleCheckIcon, CircleXIcon, FileIcon, ListTodoIcon, LoaderIcon, TriangleAlertIcon } from './icons';
+import { BrainIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, CircleCheckIcon, CircleXIcon, CopyIcon, FileIcon, ListTodoIcon, LoaderIcon, TriangleAlertIcon, WrenchIcon } from './icons';
+
+/** 取消息可复制的纯文本：用户取原文，助手拼接全部文本片段（不含工具/思考）。 */
+function messagePlainText(message: ChatMessage): string {
+  if (message.role === 'user') return message.content ?? '';
+  const text = messageParts(message)
+    .filter((p) => p.kind === 'text')
+    .map((p) => (p.kind === 'text' ? p.text : ''))
+    .join('\n\n')
+    .trim();
+  return text || (message.content ?? '');
+}
+
+/** 单条消息的复制按钮：点击复制文本，短暂显示「已复制」反馈；hover 时显现。 */
+function CopyButton({ text, align = 'left' }: { text: string; align?: 'left' | 'right' }) {
+  const [copied, setCopied] = useState(false);
+  if (!text.trim()) return null;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // 回退：非安全上下文 / 旧浏览器无 navigator.clipboard
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+      } catch {
+        // 忽略：复制失败时不反馈
+      }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      type="button"
+      title="复制文本"
+      aria-label="复制文本"
+      onClick={copy}
+      className={`mt-1 flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-zinc-400 opacity-0 transition-opacity hover:bg-zinc-100 hover:text-zinc-600 focus-visible:opacity-100 group-hover:opacity-100 ${
+        align === 'right' ? 'self-end' : 'self-start'
+      }`}
+    >
+      {copied ? <CheckIcon size={12} className="text-emerald-600" /> : <CopyIcon size={12} />}
+      {copied ? '已复制' : '复制'}
+    </button>
+  );
+}
 
 function formatSize(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -41,16 +94,9 @@ function AttachmentList({ attachments, projectId }: { attachments: ChatAttachmen
   );
 }
 
-function ToolCallCard({ tool }: { tool: ToolCall }) {
-  const [open, setOpen] = useState(false);
-  const summary = (() => {
-    const input = tool.input as Record<string, unknown> | null;
-    if (input && typeof input === 'object') {
-      const hint = input.path ?? input.file_path ?? input.command ?? input.cmd;
-      if (typeof hint === 'string') return hint.length > 80 ? `${hint.slice(0, 80)}…` : hint;
-    }
-    return '';
-  })();
+function ToolCallCard({ tool, defaultOpen = false }: { tool: ToolCall; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const summary = toolSummary(tool);
   const pending = tool.result === undefined;
 
   return (
@@ -86,6 +132,104 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
               {tool.result || '(无输出)'}
             </pre>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 活动块（Codex work log 语义）：一段连续的工作片段（工具调用 + 思考 +
+ * 步骤间短叙述）默认收起成一行摘要——进行中显示当前动作，结束后显示步数；
+ * 展开时按原始顺序铺平全部步骤，工具卡默认展开细节。位置保持在时间线
+ * 原处，不打乱消息顺序。
+ */
+function ActivityBlock({
+  parts,
+  tools,
+  streaming,
+  isLast,
+}: {
+  parts: MessagePart[];
+  tools: ToolCall[];
+  streaming?: boolean;
+  /** 是否消息的最后一个块（思考中提示只对最新块显示）。 */
+  isLast?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const toolCount = activityToolCount(parts);
+
+  // 纯思考块：沿用轻量的「思考过程」折叠行。
+  if (toolCount === 0) {
+    const text = parts.map((p) => (p.kind === 'tool' ? '' : p.text)).join('\n\n');
+    return <ThinkingBlock text={text} streaming={streaming && isLast} />;
+  }
+  // 单个工具、无伴随叙述：直接平铺一张卡（Codex 单 cell 形态）。
+  if (parts.length === 1 && parts[0].kind === 'tool') {
+    const tool = tools[parts[0].toolIndex];
+    return tool ? <ToolCallCard tool={tool} /> : null;
+  }
+
+  const toolOf = (p: MessagePart) => (p.kind === 'tool' ? tools[p.toolIndex] : undefined);
+  const pendingTool = streaming ? parts.map(toolOf).find((t) => t && t.result === undefined) : undefined;
+  const thinkingLive = streaming && isLast && parts.at(-1)?.kind === 'thinking';
+  const running = Boolean(streaming && (pendingTool || thinkingLive));
+  const errors = parts.map(toolOf).filter((t) => t?.isError).length;
+  const hint = pendingTool
+    ? `正在运行 ${pendingTool.name ?? 'tool'} ${toolSummary(pendingTool)}`.trim()
+    : thinkingLive
+      ? '思考中…'
+      : errors > 0
+        ? `${errors} 步失败`
+        : '';
+
+  return (
+    <div className="my-1 rounded-lg border border-zinc-200 bg-zinc-50 text-xs">
+      <button
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+      >
+        <span className="flex items-center">
+          {running ? (
+            <LoaderIcon size={13} className="animate-spin text-zinc-400" />
+          ) : errors > 0 ? (
+            <CircleXIcon size={13} className="text-red-500" />
+          ) : (
+            <CircleCheckIcon size={13} className="text-emerald-600" />
+          )}
+        </span>
+        <WrenchIcon size={12} className="text-zinc-400" />
+        <span className="shrink-0 font-medium text-zinc-700">
+          {running ? `执行中 · ${toolCount} 步` : `执行了 ${toolCount} 步操作`}
+        </span>
+        <span className="truncate font-mono text-zinc-400">{hint}</span>
+        <span className="ml-auto text-zinc-400">{open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}</span>
+      </button>
+      {open && (
+        <div className="space-y-1 border-t border-zinc-200 px-1.5 py-1.5">
+          {parts.map((p, i) => {
+            if (p.kind === 'tool') {
+              const tool = tools[p.toolIndex];
+              return tool ? <ToolCallCard key={`tool-${p.toolIndex}`} tool={tool} defaultOpen /> : null;
+            }
+            if (p.kind === 'thinking') {
+              return (
+                <div key={`th-${i}`} className="rounded-md bg-zinc-100/70 px-2 py-1.5">
+                  <span className="mb-1 flex items-center gap-1 text-[11px] text-zinc-400">
+                    <BrainIcon size={11} />
+                    思考
+                  </span>
+                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap text-zinc-500">{p.text}</pre>
+                </div>
+              );
+            }
+            return (
+              <div key={`tx-${i}`} className="md px-1 text-zinc-600">
+                <ReactMarkdown>{p.text}</ReactMarkdown>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -151,7 +295,7 @@ function AssistantContent({ content, streaming }: { content: string; streaming?:
 export default function MessageView({ message, projectId }: { message: ChatMessage; projectId: string }) {
   if (message.role === 'user') {
     return (
-      <div className="flex flex-col items-end">
+      <div className="group flex flex-col items-end">
         {message.content && (
           <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-zinc-800 px-4 py-2.5 text-sm text-white">
             {message.content}
@@ -160,16 +304,37 @@ export default function MessageView({ message, projectId }: { message: ChatMessa
         {message.attachments && message.attachments.length > 0 && (
           <AttachmentList attachments={message.attachments} projectId={projectId} />
         )}
+        <CopyButton text={messagePlainText(message)} align="right" />
       </div>
     );
   }
 
+  // Codex transcript 式时间线：按事件原始顺序渲染文本段与活动块，
+  // 工具调用不再脱离上下文集中展示。
+  const parts = messageParts(message);
+  const blocks = groupMessageParts(parts);
+  const tools = message.tools ?? [];
+
   return (
-    <div className="max-w-full text-sm text-zinc-800">
-      {message.thinking && <ThinkingBlock text={message.thinking} streaming={message.streaming} />}
-      {message.tools?.map((tool, i) => <ToolCallCard key={tool.id ?? i} tool={tool} />)}
-      {message.content && <AssistantContent content={message.content} streaming={message.streaming} />}
-      {message.streaming && !message.content && !message.thinking && (
+    <div className="group max-w-full text-sm text-zinc-800">
+      {blocks.map((block, i) =>
+        block.kind === 'text' ? (
+          <AssistantContent
+            key={`text-${block.index}`}
+            content={block.text}
+            streaming={message.streaming && i === blocks.length - 1}
+          />
+        ) : (
+          <ActivityBlock
+            key={`activity-${block.index}`}
+            parts={block.parts}
+            tools={tools}
+            streaming={message.streaming}
+            isLast={i === blocks.length - 1}
+          />
+        ),
+      )}
+      {message.streaming && parts.length === 0 && (
         <p className="animate-pulse text-zinc-400">思考中…</p>
       )}
       {message.error && (
@@ -178,6 +343,7 @@ export default function MessageView({ message, projectId }: { message: ChatMessa
           {message.error}
         </p>
       )}
+      {!message.streaming && <CopyButton text={messagePlainText(message)} align="left" />}
     </div>
   );
 }

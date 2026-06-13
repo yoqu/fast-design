@@ -32,12 +32,13 @@ import {
   updateConversation,
 } from './conversations.js';
 import { composePromptWithAttachments, parsePendingAttachmentsPatch, sanitizeAttachments } from './attachments.js';
+import { autoTitleConversation } from './conversation-title.js';
 import { importClaudeDesignZip } from './claude-design-import.js';
 import { parseCreateProjectBody } from './project-create.js';
 import { designAppendPrompts } from './prompts/compose.js';
 import { enabledSkillPaths } from './pi-skills.js';
 import { runningProjectIds } from './running.js';
-import { activeTurn, recoverInterruptedTurns, removeTurnJournal, startTurn } from './turns.js';
+import { activeTurn, pipeTurnToResponse, recoverInterruptedTurns, removeTurnJournal, startTurn } from './turns.js';
 import { registerPiRoutes } from './pi-routes.js';
 import { readWebuiSettings } from './webui-settings.js';
 import { closeProjectWatcher, watchProject } from './watch.js';
@@ -250,9 +251,16 @@ app.post('/api/projects/:id/conversations/:cid/chat', async (req, res) => {
     return res.status(409).json({ error: 'agent 正忙，请先停止当前回合' });
   }
 
-  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.flushHeaders();
+  // 首条消息且对话未命名：与回合并行跑一次性 AI 总结生成对话标题。
+  const conv = getConversation(id, cid);
+  if (conv && !conv.title && message && readConversationHistory(id, cid).length === 0) {
+    void autoTitleConversation({
+      projectId: id,
+      cid,
+      message,
+      model: conv.model ?? getProject(id)?.model ?? null,
+    });
+  }
 
   appendConversationHistory(id, cid, {
     role: 'user',
@@ -263,15 +271,10 @@ app.post('/api/projects/:id/conversations/:cid/chat', async (req, res) => {
 
   // 回合与连接解耦：本响应只是第一个订阅者。客户端断开仅退订、不再 abort，
   // 回合后台跑完并由 startTurn 统一折叠落盘（spec: 2026-06-12-turn-resume）。
-  const { turn, finished } = startTurn(id, cid, (emit) =>
+  const { turn } = startTurn(id, cid, (emit) =>
     session.prompt(composePromptWithAttachments(message, attachments), emit),
   );
-  const unsubscribe = turn.subscribe((ev) => {
-    res.write(`${JSON.stringify(ev)}\n`);
-  });
-  req.on('close', unsubscribe);
-  await finished;
-  res.end();
+  pipeTurnToResponse(turn, res);
 });
 
 // 续接进行中的回合：回放已缓冲事件并实时续流，结尾 done；空闲返回 204。
@@ -282,15 +285,7 @@ app.get('/api/projects/:id/conversations/:cid/chat/stream', (req, res) => {
   if (!getConversation(id, cid)) return res.status(404).json({ error: 'conversation not found' });
   const turn = activeTurn(id, cid);
   if (!turn) return res.status(204).end();
-
-  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.flushHeaders();
-  const unsubscribe = turn.subscribe((ev) => {
-    res.write(`${JSON.stringify(ev)}\n`);
-    if (ev.type === 'done') res.end();
-  });
-  req.on('close', unsubscribe);
+  pipeTurnToResponse(turn, res);
 });
 
 app.get('/api/projects/:id/files', (req, res) => {
@@ -443,7 +438,8 @@ app.get('/api/projects/:id/events', (req, res) => {
     res.write(`data: ${JSON.stringify({ type: 'files-changed' })}\n\n`);
   });
   const ping = setInterval(() => res.write(': ping\n\n'), 25000);
-  req.on('close', () => {
+  // 挂 res 而非 req：req 'close' 在请求消息完成时即触发（见 pipeTurnToResponse 注释）。
+  res.on('close', () => {
     clearInterval(ping);
     unsubscribe();
   });

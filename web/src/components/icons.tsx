@@ -333,6 +333,54 @@ export const FileIcon = createIcon(
   'FileIcon',
 );
 
+// 分享（三节点连线）
+export const ShareIcon = createIcon(
+  <>
+    <circle cx="18" cy="5" r="3" />
+    <circle cx="6" cy="12" r="3" />
+    <circle cx="18" cy="19" r="3" />
+    <path d="m8.59 13.51 6.83 3.98m-.01-10.98-6.82 3.98" />
+  </>,
+  'ShareIcon',
+);
+
+// 复制
+export const CopyIcon = createIcon(
+  <>
+    <rect x="8" y="8" width="14" height="14" rx="2" />
+    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+  </>,
+  'CopyIcon',
+);
+
+// 全屏（四角向外）
+export const MaximizeIcon = createIcon(
+  <>
+    <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+    <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+    <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+    <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+  </>,
+  'MaximizeIcon',
+);
+
+// 退出全屏（四角向内）
+export const MinimizeIcon = createIcon(
+  <>
+    <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+    <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+    <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+    <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+  </>,
+  'MinimizeIcon',
+);
+
+// 扳手（工具调用）
+export const WrenchIcon = createIcon(
+  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />,
+  'WrenchIcon',
+);
+
 // 图片
 export const ImageIcon = createIcon(
   <>
