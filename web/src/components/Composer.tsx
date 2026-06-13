@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../lib/api';
-import type { ChatAttachment, PiModel } from '../lib/types';
+import { api, piApi } from '../lib/api';
+import type { ChatAttachment, PiModel, SkillInfo, SkillRef } from '../lib/types';
 import { applyMention, filterMentionFiles, getMentionContext, type MentionContext } from '../lib/mention';
-import { CheckIcon, ChevronDownIcon, FileIcon, LoaderIcon, PaperclipIcon, XIcon } from './icons';
+import { CheckIcon, ChevronDownIcon, FileIcon, LoaderIcon, PaperclipIcon, PlusIcon, SparklesIcon, XIcon } from './icons';
 
 /** 一次性预填内容（pendingPrompt + 快速简报里上传的附件）。 */
 export type ComposerSeed = {
@@ -24,7 +24,7 @@ type Props = {
   projectModel: string | null;
   /** 切换会话模型（null = 恢复跟随项目设置）；回合进行中按钮禁用。 */
   onModelChange: (model: string | null) => void;
-  onSend: (message: string, attachments: ChatAttachment[]) => void;
+  onSend: (message: string, attachments: ChatAttachment[], skills: SkillRef[]) => void;
   onStop: () => void;
 };
 
@@ -62,6 +62,13 @@ export default function Composer({ projectId, busy, seed, models, model, project
   const [dragOver, setDragOver] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [skillQuery, setSkillQuery] = useState('');
+  const [skillList, setSkillList] = useState<SkillInfo[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<SkillRef[]>([]);
+  const plusMenuRef = useRef<HTMLDivElement>(null);
+  const skillsLoaded = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // @ 弹层打开期间的项目文件全集；打开时拉取一次。
@@ -120,6 +127,38 @@ export default function Composer({ projectId, busy, seed, models, model, project
     },
     [model, onModelChange],
   );
+
+  // ---- + 菜单 / Skill 引用 ----
+
+  useEffect(() => {
+    if (!plusMenuOpen && !skillPickerOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!plusMenuRef.current?.contains(e.target as Node)) {
+        setPlusMenuOpen(false);
+        setSkillPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [plusMenuOpen, skillPickerOpen]);
+
+  const openSkillPicker = useCallback(() => {
+    setPlusMenuOpen(false);
+    setSkillPickerOpen(true);
+    if (!skillsLoaded.current) {
+      skillsLoaded.current = true;
+      piApi.skills(projectId).then(setSkillList).catch(() => setSkillList([]));
+    }
+  }, [projectId]);
+
+  const toggleSkill = useCallback((s: SkillInfo) => {
+    setSelectedSkills((prev) => {
+      const exists = prev.some((p) => p.scope === s.scope && p.rel === s.rel);
+      return exists
+        ? prev.filter((p) => !(p.scope === s.scope && p.rel === s.rel))
+        : [...prev, { scope: s.scope, rel: s.rel, name: s.name }];
+    });
+  }, []);
 
   // ---- @ 提及 ----
 
@@ -234,7 +273,9 @@ export default function Composer({ projectId, busy, seed, models, model, project
     setValue('');
     setAttachments([]);
     closeMention();
-    onSend(message, sent);
+    const sentSkills = selectedSkills;
+    setSelectedSkills([]);
+    onSend(message, sent, sentSkills);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -352,6 +393,28 @@ export default function Composer({ projectId, busy, seed, models, model, project
             ))}
           </div>
         )}
+        {selectedSkills.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2 px-1">
+            {selectedSkills.map((s) => (
+              <span
+                key={`${s.scope}:${s.rel}`}
+                className="group flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-xs text-violet-700"
+              >
+                <SparklesIcon size={13} className="shrink-0 text-violet-400" />
+                <span className="max-w-36 truncate font-medium">{s.name}</span>
+                <button
+                  type="button"
+                  title="移除 skill"
+                  aria-label={`移除 skill ${s.name}`}
+                  onClick={() => setSelectedSkills((prev) => prev.filter((p) => !(p.scope === s.scope && p.rel === s.rel)))}
+                  className="rounded p-0.5 text-violet-400 hover:bg-violet-200 hover:text-violet-700"
+                >
+                  <XIcon size={11} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex flex-col gap-2">
           <input
             ref={fileInputRef}
@@ -395,17 +458,105 @@ export default function Composer({ projectId, busy, seed, models, model, project
             placeholder="描述你想开发的页面…（@ 引用文件，Enter 发送，Shift+Enter 换行）"
             className="max-h-72 w-full resize-none bg-transparent px-1.5 py-1 text-sm outline-none"
           />
-          {/* 底部工具栏：附件 / 模型在左，发送在右 */}
+          {/* 底部工具栏：+ 菜单 / 模型在左，发送在右 */}
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              title="添加附件"
-              aria-label="添加附件"
-              onClick={() => fileInputRef.current?.click()}
-              className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-            >
-              <PaperclipIcon size={16} />
-            </button>
+            <div className="relative" ref={plusMenuRef}>
+              <button
+                type="button"
+                title="添加内容"
+                aria-label="添加内容"
+                aria-haspopup="menu"
+                aria-expanded={plusMenuOpen || skillPickerOpen}
+                onClick={() => {
+                  setSkillPickerOpen(false);
+                  setPlusMenuOpen((v) => !v);
+                }}
+                className={`rounded-lg p-2 ${
+                  plusMenuOpen || skillPickerOpen ? 'bg-zinc-100 text-zinc-700' : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700'
+                }`}
+              >
+                <PlusIcon size={16} />
+              </button>
+              {plusMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute bottom-full left-0 z-20 mb-1.5 w-44 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-lg"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setPlusMenuOpen(false);
+                      fileInputRef.current?.click();
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50"
+                  >
+                    <PaperclipIcon size={15} className="shrink-0 text-zinc-400" />
+                    添加附件
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={openSkillPicker}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50"
+                  >
+                    <SparklesIcon size={15} className="shrink-0 text-zinc-400" />
+                    引用 Skill
+                  </button>
+                </div>
+              )}
+              {skillPickerOpen && (
+                <div className="absolute bottom-full left-0 z-20 mb-1.5 flex max-h-80 w-80 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg">
+                  <div className="border-b border-zinc-100 p-2">
+                    <input
+                      autoFocus
+                      value={skillQuery}
+                      onChange={(e) => setSkillQuery(e.target.value)}
+                      placeholder="搜索 skill…"
+                      className="w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm outline-none focus:border-zinc-400"
+                    />
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto py-1">
+                    {(() => {
+                      const q = skillQuery.trim().toLowerCase();
+                      const list = q
+                        ? skillList.filter(
+                            (s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q),
+                          )
+                        : skillList;
+                      const scopeLabel: Record<string, string> = { bundled: '内置设计', project: '项目', global: '全局' };
+                      if (list.length === 0) {
+                        return <p className="px-3 py-4 text-center text-xs text-zinc-400">无匹配 skill</p>;
+                      }
+                      return list.map((s) => {
+                        const checked = selectedSkills.some((p) => p.scope === s.scope && p.rel === s.rel);
+                        return (
+                          <button
+                            key={`${s.scope}:${s.rel}`}
+                            type="button"
+                            onClick={() => toggleSkill(s)}
+                            className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-zinc-50"
+                          >
+                            <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
+                              {checked && <CheckIcon size={13} className="text-violet-600" />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate text-sm text-zinc-800">{s.name}</span>
+                                <span className="shrink-0 rounded bg-zinc-100 px-1 text-[10px] text-zinc-400">
+                                  {scopeLabel[s.scope] ?? s.scope}
+                                </span>
+                              </span>
+                              <span className="block truncate text-[11px] text-zinc-400">{s.description}</span>
+                            </span>
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="relative" ref={modelMenuRef}>
               <button
                 type="button"
@@ -419,7 +570,10 @@ export default function Composer({ projectId, busy, seed, models, model, project
                   modelMenuOpen ? 'bg-zinc-100 text-zinc-700' : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700'
                 }`}
               >
-                <span className="truncate">{model ? modelShortName(model) : '默认'}</span>
+                <span className="truncate">
+                  {model ? modelShortName(model) : projectModel ? modelShortName(projectModel) : '全局默认'}
+                </span>
+                {!model && projectModel && <span className="shrink-0 text-[10px] text-zinc-300">跟随</span>}
                 <ChevronDownIcon size={12} className="shrink-0" />
               </button>
               {modelMenuOpen && (
