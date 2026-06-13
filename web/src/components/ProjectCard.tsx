@@ -26,6 +26,29 @@ export default function ProjectCard({ project, onOpen, onRename, onDelete, selec
   const [draft, setDraft] = useState(project.name);
   const menuRef = useRef<HTMLDivElement>(null);
   const entry = project.metadata?.entryFile ?? null;
+  // 缩略图走路径式 preview 路由（与 FileViewer 同款）：query 式 /file?path= 会让
+  // HTML 里的相对资源（css/js）解析到不存在的 URL → 样式全丢；preview 路由按目录
+  // 解析相对路径，且 opaque origin + ACAO:* 放行 Babel 对同目录 .jsx 的 XHR。
+  const [preview, setPreview] = useState<{ url: string; sandbox: string } | null>(null);
+
+  useEffect(() => {
+    if (!entry) {
+      setPreview(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .previewUrl(project.id, entry)
+      .then((r) => {
+        if (!cancelled) setPreview({ url: r.url, sandbox: r.iframeSandbox });
+      })
+      .catch(() => {
+        if (!cancelled) setPreview(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, entry]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -62,18 +85,15 @@ export default function ProjectCard({ project, onOpen, onRename, onDelete, selec
       onClick={handleCardClick}
     >
       <div className="pointer-events-none relative h-36 overflow-hidden rounded-t-xl border-b border-zinc-100 bg-zinc-50">
-        {entry ? (
-          <>
-            {/* sandbox 不含 allow-same-origin:缩略图只需渲染,禁 storage/cookie 是有意为之 */}
-            <iframe
-              src={api.fileUrl(project.id, entry)}
-              loading="lazy"
-              sandbox="allow-scripts"
-              tabIndex={-1}
-              title={`${project.name} 预览`}
-              className="h-[576px] w-[400%] origin-top-left scale-[0.25] border-0 bg-white"
-            />
-          </>
+        {preview ? (
+          <iframe
+            src={preview.url}
+            loading="lazy"
+            sandbox={preview.sandbox}
+            tabIndex={-1}
+            title={`${project.name} 预览`}
+            className="h-[576px] w-[400%] origin-top-left scale-[0.25] border-0 bg-white"
+          />
         ) : (
           <div className="flex h-full items-center justify-center bg-gradient-to-br from-zinc-100 to-zinc-200 text-3xl font-semibold text-zinc-400">
             {(project.name[0] ?? 'π').toUpperCase()}
