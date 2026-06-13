@@ -29,7 +29,7 @@ export default function EntryNavRail({ open, view, onClose, onNavigate, onNewPro
       <div className="flex items-center gap-2 px-4 py-3.5">
         <button type="button" className="flex items-center gap-2" onClick={() => onNavigate('projects')}>
           <span className="text-lg">π</span>
-          <span className="text-sm font-semibold text-zinc-800">Pi Web Studio</span>
+          <span className="text-sm font-semibold text-zinc-800">fast-design</span>
         </button>
         <div className="flex-1" />
         <button

@@ -2,7 +2,7 @@
   "name": "fast-design",
   "private": true,
   "version": "0.1.0",
-  "description": "Chat with an AI agent in your browser to design and build web pages, with a live preview workspace and multi-format export.",
+  "description": "AI product-prototyping tool: describe the product you want and an AI agent builds a clickable, high-fidelity prototype in your browser, with live preview and multi-format export.",
   "license": "MIT",
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"pnpm --filter server dev\" \"pnpm --filter web dev\"",

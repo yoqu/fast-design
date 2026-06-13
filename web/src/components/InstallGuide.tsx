@@ -32,7 +32,7 @@ export default function InstallGuide({ onRecheck }: Props) {
       <span className="text-5xl">π</span>
       <h1 className="mt-4 text-lg font-semibold text-zinc-900">未检测到 pi CLI</h1>
       <p className="mt-2 max-w-md text-center text-sm text-zinc-500">
-        Pi Web Studio 依赖本机安装的 pi coding agent。请先安装（需要 Node.js ≥ 20），然后点击重新检测。
+        fast-design 依赖本机安装的 pi coding agent。请先安装（需要 Node.js ≥ 20），然后点击重新检测。
       </p>
       <div className="mt-6 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 font-mono text-sm">
         <code>{INSTALL_CMD}</code>

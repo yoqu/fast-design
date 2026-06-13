@@ -598,6 +598,6 @@ registerPiRoutes(app, { disposeIdleSessions });
 recoverInterruptedTurns();
 
 app.listen(PORT, () => {
-  console.log(`pi-web-studio server: http://localhost:${PORT}`);
+  console.log(`fast-design server: http://localhost:${PORT}`);
   console.log(`projects root: ${PROJECTS_ROOT}`);
 });
