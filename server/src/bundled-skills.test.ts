@@ -20,14 +20,29 @@ describe('bundled react-prototype skill', () => {
     expect(fs.existsSync(path.join(root, rel))).toBe(true);
   });
 
-  it('seed 模板使用固定版本 CDN 且组件经 window 暴露', () => {
+  it('seed 模板用国内镜像固定版本 CDN 且组件经 window 暴露', () => {
     const html = fs.readFileSync(path.join(root, 'assets/template.html'), 'utf8');
-    expect(html).toContain('react@18.3.1/umd/react.development.js');
-    expect(html).toContain('@babel/standalone@7.29.0/babel.min.js');
+    expect(html).toContain('registry.npmmirror.com/react/18.3.1/files/umd/react.development.js');
+    expect(html).toContain('registry.npmmirror.com/@babel/standalone/7.29.0/files/babel.min.js');
     expect(html).toContain('cdn.tailwindcss.com/3.4.16');
+    expect(html).not.toContain('unpkg.com');
     expect(html).not.toContain('type="module"');
     const anims = fs.readFileSync(path.join(root, 'assets/animations.jsx'), 'utf8');
     expect(anims).toContain('Object.assign(window,');
+  });
+
+  it('SKILL.md 承接完整作者契约（运行时/网络/token + 组件/动效/设备框架）', () => {
+    const md = fs.readFileSync(path.join(root, 'SKILL.md'), 'utf8');
+    // 从瘦身的 TECH_STACK_PROMPT 迁入的基础设施段
+    expect(md).toContain('registry.npmmirror.com');
+    expect(md).toContain('fonts.loli.net');
+    expect(md).toContain('unpkg.com'); // 作为「禁引」清单点名
+    expect(md).toContain('css/tokens.css');
+    // 行为/手法类契约（本就在 skill 内，去重后成为唯一真相源）
+    expect(md).toContain('Object.assign(window');
+    expect(md).toContain('IosFrame');
+    expect(md).toContain('min-h-screen');
+    expect(md).toMatch(/单文件|离线/);
   });
 });
 

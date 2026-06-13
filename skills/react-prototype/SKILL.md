@@ -22,6 +22,25 @@ od:
 `assets/template.html` → `references/layouts.md` → `references/checklist.md`。
 不要从零写壳与 CSS——拷贝 seed、替换 token、粘贴骨架。
 
+## 运行时与网络（固定版本 · 国内镜像，恒须生效）
+
+- 固定版本运行时，**版本号与 integrity 哈希不可改**；seed `assets/template.html` 已写好，直接拷贝：
+  `registry.npmmirror.com/react/18.3.1` + `react-dom/18.3.1` + `@babel/standalone/7.29.0`
+  （阿里 npm 镜像，字节级一致，SRI 仍匹配）+ `cdn.tailwindcss.com/3.4.16`。
+- 禁浮动 CDN（`@latest` / 不带版本）；`<script type="text/babel">` 禁加 `type="module"`（破坏转译）。
+- **禁引境外中央 CDN**：`unpkg.com` / `cdn.jsdelivr.net` / `cdnjs.cloudflare.com` / `esm.sh` /
+  `skypack.dev` / `fonts.googleapis.com` / `fonts.gstatic.com`——国内慢或被墙，原型会显得坏掉。
+- 额外 JS/CSS 库一律走国内镜像，首选 `https://registry.npmmirror.com/<pkg>/<version>/files/<path>`
+  （字节级一致，SRI 不变），必带显式版本；备选 `cdn.staticfile.net` / `lib.baomitu.com` / `cdn.bootcdn.net`。
+- 字体首选系统栈（`-apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif`），
+  尽量不抓取；确需 web 字体走 `https://fonts.loli.net/css2?...`，绝不直连 `fonts.googleapis.com`。
+
+## 样式与 token
+
+- 品牌/设计 token 落 `css/tokens.css`，oklch CSS 变量（`--bg` / `--surface` / `--fg` / `--muted` / `--border` / `--accent`）。
+- JSX / Tailwind 里每个颜色都引 token（`text-[color:var(--fg)]`、`bg-[color:var(--surface)]`）或语义类，**禁散落 hex**。
+- Tailwind 只管布局/间距/排版工具类，不替代 token 系统。
+
 ## 组件拆分模式
 
 - 屏 = `.html` 壳（screen-file-first），组件 = `.jsx` 文件（项目根或 `js/`）。
@@ -49,12 +68,21 @@ od:
 - 复杂时间线/滚动联动升级 gsap-core skill。
 - 动画只用 transform/opacity；禁 `scrollIntoView`。
 
-## 设备框架
+## 设备框架（移动端外壳是固定窗口，内容只在内层滚）
 
-- 移动端原型必须套 `assets/frames/` 组件（iOS/Android），桌面演示可用
+- 移动端原型**必须**套 `assets/frames/` 组件（iOS/Android），桌面演示可用
   browser-window。外框 `transform: scale()` 自适应视口，内容固定逻辑尺寸
   （iPhone 393×852、Pixel 412×915）。
-- 拷贝 frames 文件进项目 `js/` 后经 `window` 共享，不要内联重写。
+- 拷贝 frames 文件进项目 `js/` 后经 `window` 共享，**不要手搓一个手机形状的边框 div 直接包内容**。
+- **最常见的坑——外壳被内容撑高**：外框 `screen` 是固定高度 + `overflow:hidden`，
+  长内容只在 `content`（`overflowY:auto`）内层滚动，绝不能把外壳顶高。若看到手机壳随
+  内容变高/整壳跟随滚动，是把内容当成了壳的兄弟节点——必须作为 `<IosFrame>{屏幕}</IosFrame>`
+  的 `children` 传入。
+- 套进设备框架的屏幕内容里**禁用** `100vh` / `min-h-screen` / `height:100vh`——`vh` 指真实浏览器
+  视口而非模拟设备，会撑破固定外壳。用 `height:100%` 或让其自然流动并滚动。
+- 屏幕内容要**铺满设备宽度**：`references/layouts.md` 的骨架用了桌面向的 `maxWidth: 480/760/920`，
+  放进手机框时去掉这些上限（改 `width:100%`），否则屏幕会缩在窄列里。
+- 状态栏 / 灵动岛 / Home 指示条由外框 `position:absolute` 固定，滚动时不动——不要另写成会滚的兄弟节点。
 
 ## 降级条款
 

@@ -9,6 +9,17 @@ export type SkillRef = { scope: SkillScope; rel: string };
 
 const SKILL_SCOPES: SkillScope[] = ['global', 'project', 'bundled'];
 
+/**
+ * 强启用的内置 skill（无视用户开关，对所有项目恒注入）。
+ * 瘦身后的 TECH_STACK_PROMPT 只在系统提示里留指针，完整作者契约的单一真相源是
+ * react-prototype skill——故它必须恒在场，否则原型项目会丢掉技术栈契约。
+ */
+const ALWAYS_ON_BUNDLED_SKILLS = new Set(['react-prototype']);
+
+function isAlwaysOnBundled(scope: SkillScope, rel: string): boolean {
+  return scope === 'bundled' && ALWAYS_ON_BUNDLED_SKILLS.has(rel);
+}
+
 /** 校验客户端传来的 skill 引用：保留合法项，按 scope+rel 去重。 */
 export function sanitizeSkillRefs(input: unknown): SkillRef[] {
   if (!Array.isArray(input)) return [];
@@ -155,7 +166,8 @@ function scanRoot(root: string, scope: SkillScope, disabled: Set<string>): Skill
       description: fm.description ?? '',
       rel,
       scope,
-      enabled: !isDisabled(rel, disabled),
+      // 强启用的内置 skill 无视禁用清单，恒为 enabled（UI 显示开启，注入列表必含）。
+      enabled: isAlwaysOnBundled(scope, rel) || !isDisabled(rel, disabled),
     });
   };
   const walk = (dir: string) => {
@@ -236,6 +248,8 @@ export function skillReferenceDirective(skills: { name: string; description: str
 
 export function setSkillEnabled(scope: SkillScope, rel: string, enabled: boolean, projectDir: string | null): void {
   resolveSkillFile(scope, rel, projectDir); // 路径校验
+  // 强启用的内置 skill 不可被关：toggle 设为 no-op，避免写入失效的禁用条目。
+  if (isAlwaysOnBundled(scope, rel)) return;
   // 内置 skill 的开关写 webui-settings 的 bundledSkillsDisabled（存被禁用的 rel）。
   if (scope === 'bundled') {
     const current = readWebuiSettings().bundledSkillsDisabled ?? [];

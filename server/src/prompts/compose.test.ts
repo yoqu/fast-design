@@ -74,16 +74,34 @@ describe('renderMetadataBlock', () => {
   });
 });
 
-describe('tech-stack prompt', () => {
-  it('固定版本 CDN 与组件共享硬契约', () => {
-    expect(TECH_STACK_PROMPT).toContain('react@18.3.1/umd/react.development.js');
-    expect(TECH_STACK_PROMPT).toContain('react-dom@18.3.1/umd/react-dom.development.js');
-    expect(TECH_STACK_PROMPT).toContain('@babel/standalone@7.29.0/babel.min.js');
+describe('tech-stack prompt（瘦身版：基础设施硬约束 + skill 指针）', () => {
+  it('保留固定版本运行时硬契约', () => {
+    expect(TECH_STACK_PROMPT).toContain('registry.npmmirror.com/react/18.3.1/files/umd/react.development.js');
+    expect(TECH_STACK_PROMPT).toContain('registry.npmmirror.com/react-dom/18.3.1/files/umd/react-dom.development.js');
+    expect(TECH_STACK_PROMPT).toContain('registry.npmmirror.com/@babel/standalone/7.29.0/files/babel.min.js');
     expect(TECH_STACK_PROMPT).toContain('cdn.tailwindcss.com/3.4.16');
-    expect(TECH_STACK_PROMPT).toContain('Object.assign(window, {');
-    expect(TECH_STACK_PROMPT).toContain('scrollIntoView');
-    expect(TECH_STACK_PROMPT).toContain('css/tokens.css');
-    expect(TECH_STACK_PROMPT).toContain('single-file / offline');
+  });
+
+  it('国内镜像：不引用境外中央 CDN，integrity 哈希保留', () => {
+    // 不再从 unpkg 引脚定运行时（仅在「禁用清单」里点名，不作为 script src）
+    expect(TECH_STACK_PROMPT).not.toContain('unpkg.com/react');
+    expect(TECH_STACK_PROMPT).not.toContain('src="https://unpkg');
+    // SRI 哈希在 npmmirror 上字节级一致，必须保留
+    expect(TECH_STACK_PROMPT).toContain('sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L');
+    expect(TECH_STACK_PROMPT).toContain('registry.npmmirror.com');
+    expect(TECH_STACK_PROMPT).toContain('fonts.loli.net');
+  });
+
+  it('作者契约细节已下放，仅留 react-prototype skill 指针', () => {
+    // 行为/手法类规则迁入 skill，系统提示不再重复
+    expect(TECH_STACK_PROMPT).not.toContain('Object.assign(window, {');
+    expect(TECH_STACK_PROMPT).not.toContain('scrollIntoView');
+    expect(TECH_STACK_PROMPT).not.toContain('IosFrame');
+    expect(TECH_STACK_PROMPT).not.toContain('min-h-screen');
+    // 改为指向单一真相源 skill 及其入门三件套
+    expect(TECH_STACK_PROMPT).toContain('react-prototype');
+    expect(TECH_STACK_PROMPT).toContain('assets/template.html');
+    expect(TECH_STACK_PROMPT).toContain('references/checklist.md');
   });
 });
 

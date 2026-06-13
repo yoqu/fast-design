@@ -125,6 +125,23 @@ describe('bundled (内置设计 skill)', () => {
   it('rejects path traversal on bundled', () => {
     expect(() => readSkillContent('bundled', '../../../etc/passwd', null)).toThrow(/BAD_PATH/);
   });
+
+  it('react-prototype 强启用：无视禁用清单，恒 enabled 且 toggle off 为 no-op', () => {
+    writeSkill(bundledDir, 'react-prototype');
+    writeSkill(bundledDir, 'taste-skill');
+    // 即便预先写入禁用清单，也应被强启用覆盖
+    setSkillEnabled('bundled', 'react-prototype', false, null);
+    expect(fs.existsSync(path.join(dataDir, 'webui-settings.json'))).toBe(false); // toggle no-op，未落盘
+    const info = listSkills(null).find((s) => s.rel === 'react-prototype')!;
+    expect(info.enabled).toBe(true);
+    // 对比：普通 bundled skill 仍可正常关闭
+    setSkillEnabled('bundled', 'taste-skill', false, null);
+    expect(listSkills(null).find((s) => s.rel === 'taste-skill')!.enabled).toBe(false);
+    // 注入列表必含 react-prototype，不含被关的 taste-skill
+    const paths = enabledSkillPaths(null);
+    expect(paths).toContain(path.join(bundledDir, 'react-prototype'));
+    expect(paths).not.toContain(path.join(bundledDir, 'taste-skill'));
+  });
 });
 
 describe('enabledSkillPaths', () => {
